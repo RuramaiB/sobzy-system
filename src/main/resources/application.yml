@@ -1,0 +1,240 @@
+spring:
+  application:
+    name: intelligent-web-access-control
+
+  profiles:
+    active: dev
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/sobzy-db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: root
+    password:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+        use_sql_comments: true
+        jdbc:
+          batch_size: 20
+        order_inserts: true
+        order_updates: true
+    open-in-view: false
+
+  flyway:
+    enabled: false
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+
+
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${MAIL_USERNAME:fadzainherera9@gmail.com}
+    password: ${MAIL_PASSWORD:kqxljajvysyowxgh}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+server:
+  port: 8080
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/xml,text/plain
+  error:
+    include-message: always
+    include-binding-errors: always
+    include-stacktrace: on_param
+    include-exception: false
+
+# Application Configuration
+app:
+  name: Intelligent Web Access Control System
+  version: 1.0.0
+
+  security:
+    jwt:
+      secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970  # Change this in production!
+      expiration: 86400000      # 24 hours in milliseconds
+      refresh-expiration: 604800000  # 7 days in milliseconds
+
+    max-login-attempts: 5
+    account-lock-duration-minutes: 30
+
+    password:
+      min-length: 8
+      require-special-char: true
+      require-digit: true
+      require-uppercase: true
+
+    account-lock-duration: 1800000 # 30 minutes
+
+  proxy:
+    enabled: true
+    host: localhost
+    port: 8888
+    timeout: 30000
+
+  ml:
+    python-path: python3
+    script-path: src/main/python
+    classifier-script: classifier.py  # Add this line
+    model-path: src/main/resources/ml-models
+    api-url: http://localhost:5000
+    timeout-ms: 10000
+
+
+    classification:
+      min-confidence: 0.7
+      cache-ttl: 3600
+      batch-size: 100
+
+    training:
+      enabled: true
+      schedule: "0 0 2 * * ?"
+      min-samples: 1000
+      validation-split: 0.2
+
+  traffic:
+    logging:
+      enabled: true
+      buffer-size: 1000
+      flush-interval: 5000
+
+    analysis:
+      real-time: true
+      async: true
+      thread-pool-size: 10
+
+    retention:
+      days: 90
+      cleanup-schedule: "0 0 3 * * ?" # 3 AM daily
+
+  policy:
+    enforcement:
+      enabled: true
+      mode: STRICT # STRICT, PERMISSIVE, LEARNING
+      default-action: ALLOW
+
+    throttling:
+      enabled: true
+      default-limit-mbps: 10
+
+  notification:
+    email:
+      enabled: true
+      admin-addresses:
+        - admin@example.com
+      templates-path: classpath:templates/email
+
+    alerts:
+      critical-threshold: 10
+      high-threshold: 5
+      aggregation-window: 300000 # 5 minutes
+
+  dashboard:
+    refresh-interval: 5000
+    max-logs-display: 1000
+    chart-data-points: 50
+
+  bandwidth:
+    tracking:
+      enabled: true
+      granularity: HOURLY # HOURLY, DAILY
+      alert-threshold-gb: 50
+
+# Management & Monitoring
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+# Logging Configuration
+logging:
+  level:
+    root: INFO
+    com.webcontrol: DEBUG
+    org.springframework.web: INFO
+    org.springframework.security: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+  file:
+    name: logs/web-access-control.log
+    max-size: 10MB
+    max-history: 30
+    total-size-cap: 1GB
+
+# Swagger/OpenAPI Configuration
+springdoc:
+  api-docs:
+    path: /api-docs
+    enabled: true
+
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    operations-sorter: method
+    tags-sorter: alpha
+    doc-expansion: none
+    display-request-duration: true
+
+  show-actuator: true
+
+# Async Configuration
+spring.task.execution:
+  pool:
+    core-size: 5
+    max-size: 10
+    queue-capacity: 100
+  thread-name-prefix: async-task-
+
+spring.task.scheduling:
+  pool:
+    size: 5
+  thread-name-prefix: scheduled-task-
