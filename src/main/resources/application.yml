@@ -5,6 +5,10 @@ spring:
   profiles:
     active: dev
 
+  mvc:
+    async:
+      request-timeout: 60000
+
   datasource:
     url: jdbc:mysql://localhost:3306/sobzy-db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
     username: root
@@ -62,7 +66,7 @@ spring:
       max-request-size: 10MB
 
 server:
-  port: 8080
+  port: 1998
   compression:
     enabled: true
     mime-types: application/json,application/xml,text/html,text/xml,text/plain

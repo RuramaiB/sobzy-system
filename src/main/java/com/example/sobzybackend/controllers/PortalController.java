@@ -57,7 +57,13 @@ public class PortalController {
             log.error("Failed to auto-register device: {}", e.getMessage());
         }
 
-        return ResponseEntity.ok(Map.of("message", "IP authenticated successfully", "ip", clientIp, "user", username));
+        return ResponseEntity.ok(Map.of(
+                "message", "IP authenticated successfully",
+                "ip", clientIp,
+                "user", username,
+                "certUrl", "http://google.com/____iwacs_cert",
+                "setupInstructions",
+                "For full security monitoring, please download and INSTALL the certificate from the link below, then 'Trust' it in your device settings."));
     }
 
     @GetMapping("/check-auth")

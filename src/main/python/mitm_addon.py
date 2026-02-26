@@ -9,6 +9,7 @@ import json
 import requests
 import socket
 import threading
+import sys
 from mitmproxy import http
 from dnslib import DNSRecord, QTYPE, RR, A
 
@@ -19,8 +20,10 @@ class WebAccessControl:
         print(f"[*] IWACS Addon Started. Host IP detected as: {self.host_ip}")
 
         self.portal_url = f"http://{self.host_ip}:3000/login"
-        self.auth_check_url = f"http://{self.host_ip}:8080/api/v1/portal/check-auth"
-        self.classify_url = f"http://{self.host_ip}:8080/api/v1/traffic/classify"
+        self.auth_check_url = f"http://{self.host_ip}:1998/api/v1/portal/check-auth"
+        self.classify_url = f"http://{self.host_ip}:1998/api/v1/traffic/classify"
+        
+        print(f"[*] Backend URLs configured: Auth={self.auth_check_url}, Classify={self.classify_url}")
         
         # OS Captive Portal Trigger URLs
         self.ncsi_urls = [
@@ -83,6 +86,15 @@ class WebAccessControl:
                     request = DNSRecord.parse(data)
                     qname = str(request.q.qname).rstrip('.')
                     
+                    # WPAD Support for Auto-Proxy Discovery
+                    if qname.lower() in ["wpad", "wpad.local", "wpad.home"]:
+                        reply = request.reply()
+                        reply.add_answer(RR(qname, QTYPE.A, rdata=A(self.host_ip), ttl=60))
+                        udp_sock.sendto(reply.pack(), addr)
+                        print(f"[*] DNS WPAD RESOLVE: {client_ip} -> {self.host_ip}")
+                        sys.stdout.flush()
+                        continue
+
                     # Check Authentication Status
                     is_auth = False
                     try:
@@ -94,13 +106,15 @@ class WebAccessControl:
                     reply = request.reply()
                     
                     # Hijack Logic
-                    if not is_auth and qname not in ["localhost"]:
+                    if not is_auth and qname not in ["localhost", self.host_ip]:
                         # Point everything to the Portal machine
                         reply.add_answer(RR(qname, QTYPE.A, rdata=A(self.host_ip), ttl=60))
-                        print(f"[*] DNS HIJACK: {client_ip} queried {qname} -> {self.host_ip}")
+                        # print(f"[*] DNS HIJACK: {client_ip} queried {qname} -> {self.host_ip}")
                     else:
-                        # Forward to real DNS (8.8.8.8) for authenticated users or portal checks
+                        # Forward to real DNS (8.8.8.8)
+                        # print(f"[*] DNS FORWARD: {qname}")
                         try:
+                            # Avoid forwarding wpad if not authenticated yet to real dns
                             real_dns_resp = request.send("8.8.8.8", 53, timeout=1.0)
                             reply = DNSRecord.parse(real_dns_resp)
                         except Exception as e:
@@ -108,62 +122,143 @@ class WebAccessControl:
                     
                     udp_sock.sendto(reply.pack(), addr)
                 except Exception as e:
-                    print(f"[!] DNS Processing error: {e}")
-
-        dns_thread = threading.Thread(target=run_dns, daemon=True)
-        dns_thread.start()
+                    # print(f"[!] DNS Processing error: {e}")
+                    pass
 
     def request(self, flow: http.HTTPFlow) -> None:
         url = flow.request.pretty_url
         client_ip = flow.client_conn.peername[0]
         
-        # 1. Skip checks for infrastructure
-        if self.host_ip in url or "localhost" in url or "127.0.0.1" in url:
+        # 0. Fix for transparently redirected packets on Windows
+        if not flow.request.host or flow.request.scheme == "":
+            host_header = flow.request.headers.get("Host", "")
+            if host_header:
+                flow.request.host = host_header
+                flow.request.scheme = "https" if flow.request.port == 443 else "http"
+                url = flow.request.pretty_url
+                print(f"[*] Rectified transparent request: {url}")
+                sys.stdout.flush()
+        # 1. WPAD / PAC File Serving (Port 80 hijacking)
+        if "/wpad.dat" in flow.request.path or "proxy.pac" in flow.request.path:
+            proxy_port = 8080 # Default mitmproxy port
+            pac_content = f"""
+            function FindProxyForURL(url, host) {{
+                if (isPlainHostName(host) || shExpMatch(host, "*.local") || host == "{self.host_ip}")
+                    return "DIRECT";
+                return "PROXY {self.host_ip}:{proxy_port}; DIRECT";
+            }}
+            """
+            flow.response = http.Response.make(
+                200, 
+                pac_content.encode(), 
+                {"Content-Type": "application/x-ns-proxy-autoconfig", "Access-Control-Allow-Origin": "*"}
+            )
+            print(f"[*] Served WPAD.DAT to {client_ip}")
             return
 
-        # 2. Captive Portal Detection Trigger (NCSI)
-        is_ncsi = any(ncsi in url for ncsi in self.ncsi_urls)
-        
-        # 3. Check for Capture Portal Authentication via IP
-        try:
-            resp = requests.get(self.auth_check_url, headers={"X-Forwarded-For": client_ip}, timeout=1.0)
-            if resp.status_code == 200:
-                auth_data = resp.json()
-                if not auth_data.get("authenticated", False):
-                    # Trigger Zero-Config Popup
-                    if is_ncsi or flow.request.port == 80:
-                        print(f"[*] FORCING Portal Popup for {client_ip} searching {url}")
-                        flow.response = http.Response.make(
-                            200,
-                            f"<html><head><meta http-equiv='refresh' content='0;url={self.portal_url}'></head>"
-                            f"<body><h1>Login Required</h1><p>Wait while we redirect you to the <a href='{self.portal_url}'>Hotspot Login</a>.</p></body></html>".encode(),
-                            {"Content-Type": "text/html"}
-                        )
-                    else:
-                        # Standard 302 for non-NCSI HTTP
-                        flow.response = http.Response.make(
-                            302,
-                            b"",
-                            {"Location": self.portal_url}
-                        )
-                    return
-        except Exception as e:
-            print(f"Auth check failed: {e}")
-            pass
+        # 1.5 LOG EVERY REQUEST FOR DEBUGGING
+        print(f"[DEBUG] Intercepted: {client_ip} -> {url}")
 
-        # 4. Traffic Classification & Extraction
+        # 2. Specialized Proxy Routes (Admin/Logs/Certs)
+        if "/____iwacs_log" in url:
+            try:
+                log_data = json.loads(flow.request.content)
+                log_data["ipAddress"] = client_ip
+                event_api = f"http://{self.host_ip}:1998/api/v1/traffic/events"
+                requests.post(event_api, json=log_data, timeout=1.0)
+                flow.response = http.Response.make(204, b"", {"Access-Control-Allow-Origin": "*"})
+                return
+            except Exception as e:
+                print(f"[!] Log interception failed: {e}")
+                sys.stdout.flush()
+                flow.response = http.Response.make(500, b"Log error")
+                return
+
+        if "/____iwacs_cert" in url:
+            try:
+                import os
+                cert_path = os.path.expanduser("~/.mitmproxy/mitmproxy-ca-cert.cer")
+                if os.path.exists(cert_path):
+                    with open(cert_path, "rb") as f:
+                        flow.response = http.Response.make(200, f.read(), {"Content-Type": "application/x-x509-ca-cert"})
+                    return
+            except: pass
+
+        # 3. Skip infrastructure
+        if self.host_ip in url or "localhost" in url:
+            return
+
+        # 4. Traffic Classification (Log Everything)
+        is_allowed = True
         try:
             payload = {
                 "url": url,
                 "method": flow.request.method,
                 "ipAddress": client_ip,
                 "userAgent": flow.request.headers.get("User-Agent", "Unknown"),
-                "referer": flow.request.headers.get("Referer", ""),
-                "deviceId": "hotspot-device"
+                "referer": flow.request.headers.get("Referer", "")
             }
-            requests.post(self.classify_url, json=payload, timeout=2.0)
-        except Exception as e:
-            print(f"Classification logging failed: {e}")
+            resp = requests.post(self.classify_url, json=payload, timeout=2.0)
+            if resp.status_code == 200:
+                result = resp.json()
+                if result.get("decision") == "BLOCK" or not result.get("is_allowed", True):
+                    is_allowed = False
+        except Exception as e: 
+            print(f"[!] Traffic Classification loop error: {e}")
+            pass
+
+        if not is_allowed:
+            flow.response = http.Response.make(403, b"Blocked by IWACS", {"Content-Type": "text/html"})
+            return
+
+        # 5. Captive Portal Redirect for Unauthenticated
+        is_ncsi = any(ncsi in url for ncsi in self.ncsi_urls)
+        try:
+            resp = requests.get(self.auth_check_url, headers={"X-Forwarded-For": client_ip}, timeout=1.0)
+            if resp.status_code == 200 and not resp.json().get("authenticated", False):
+                if is_ncsi or flow.request.port == 80:
+                    portal_html = f"<html><head><meta http-equiv='refresh' content='0;url={self.portal_url}'></head><body>Redirecting to <a href='{self.portal_url}'>Login</a></body></html>"
+                    flow.response = http.Response.make(200, portal_html.encode(), {"Content-Type": "text/html"})
+                    return
+                else:
+                    flow.response = http.Response.make(302, b"", {"Location": self.portal_url})
+                    return
+        except: pass
+
+    def response(self, flow: http.HTTPFlow) -> None:
+        """Inject browser activity tracker"""
+        if flow.response and "text/html" in flow.response.headers.get("Content-Type", ""):
+            if flow.response.status_code == 200 and flow.response.content:
+                try:
+                    tracker_script = f"""
+                    <script id="iwacs-tracker">
+                    (function() {{
+                        const apiEndpoint = "/____iwacs_log";
+                        function sendEvent(type, details) {{
+                            fetch(apiEndpoint, {{
+                                method: 'POST',
+                                headers: {{ 'Content-Type': 'text/plain' }}, 
+                                body: JSON.stringify({{ eventType: type, url: window.location.href, details: details, timestamp: new Date().toISOString() }})
+                            }}).catch(() => {{}});
+                        }}
+                        document.addEventListener('click', (e) => {{
+                            const t = e.target.closest('a, button, input[type="submit"]');
+                            if (t) sendEvent('CLICK', (t.innerText || t.value || t.tagName).substring(0, 50).trim());
+                        }}, true);
+                        setInterval(() => {{ /* Navigation / Title tracking */ }}, 5000);
+                    }})();
+                    </script>
+                    """
+                    import re
+                    content = flow.response.content.decode("utf-8", "ignore")
+                    if re.search(r'</body', content, re.I):
+                        content = re.sub(r'(</body)', tracker_script + r'\1', content, 1, re.I)
+                    elif re.search(r'</html', content, re.I):
+                        content = re.sub(r'(</html)', tracker_script + r'\1', content, 1, re.I)
+                    else:
+                        content += tracker_script
+                    flow.response.content = content.encode("utf-8")
+                except: pass
 
 addons = [
     WebAccessControl()

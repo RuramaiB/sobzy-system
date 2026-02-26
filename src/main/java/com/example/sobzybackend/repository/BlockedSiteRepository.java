@@ -11,4 +11,6 @@ public interface BlockedSiteRepository extends JpaRepository<BlockedSite, Long> 
     Optional<BlockedSite> findByUrl(String url);
 
     List<BlockedSite> findByActive(boolean active);
+
+    boolean existsByUrl(String domain);
 }

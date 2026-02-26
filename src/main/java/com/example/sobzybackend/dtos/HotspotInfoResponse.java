@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @Builder
 @AllArgsConstructor
@@ -13,4 +15,8 @@ public class HotspotInfoResponse {
     private String ssid;
     private String password;
     private String status;
+    private String hostIp;
+    private String gatewayIp;
+    private String upstreamInterface;
+    private List<HotspotDevice> connectedDevices;
 }

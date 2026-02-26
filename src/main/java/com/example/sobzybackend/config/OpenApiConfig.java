@@ -8,31 +8,11 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.security.SecurityScheme;
 import io.swagger.v3.oas.annotations.servers.Server;
 
-@OpenAPIDefinition(
-        info = @Info(
-                title = "OpenApi Docs - Sobzy Backend",
-                version = "1.0"
-        ),
-        servers = {
-                @Server(
-                        description = "Local ENV",
-                        url = "http://localhost:8080"
-                )
-        }
-        ,
-        security = {
-                @SecurityRequirement(
-                        name = "bearerAuth"
-                )
-        }
-)
-@SecurityScheme(
-        name = "bearerAuth",
-        description = "JWT auth description",
-        scheme = "bearer",
-        type = SecuritySchemeType.HTTP,
-        bearerFormat = "JWT",
-        in = SecuritySchemeIn.HEADER
-)
+@OpenAPIDefinition(info = @Info(title = "OpenApi Docs - Sobzy Backend", version = "1.0"), servers = {
+                @Server(description = "Local ENV", url = "http://localhost:1998")
+}, security = {
+                @SecurityRequirement(name = "bearerAuth")
+})
+@SecurityScheme(name = "bearerAuth", description = "JWT auth description", scheme = "bearer", type = SecuritySchemeType.HTTP, bearerFormat = "JWT", in = SecuritySchemeIn.HEADER)
 public class OpenApiConfig {
 }

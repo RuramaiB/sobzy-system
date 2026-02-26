@@ -1,34 +1,74 @@
-# PowerShell script to enable Internet Connection Sharing (ICS) on Windows
-# Author: IWACS System Integration
+# Enable-ICS.ps1
+# This script enables Internet Connection Sharing (ICS) between a source adapter and a target adapter.
+# It requires Administrator privileges.
 
-$m = New-Object -ComObject HNetCfg.HNetShare
+param (
+    [string]$SourceAdapterName, # The adapter with internet access (e.g., "Wi-Fi" or "Ethernet")
+    [string]$TargetAdapterName  # The hotspot adapter (e.g., "Local Area Connection* 1")
+)
 
-# 1. Identify the Private Connection (Hotspot)
-# Usually has the specific Hotspot IP prefix or 'Hotspot' in the name
-$privateConn = $m.EnumEveryConnection | Where-Object { 
-    $props = $m.NetConnectionProps($_)
-    $props.Name -like "*Local Area Connection*" -or $props.Name -like "*Hotspot*"
-} | Select-Object -First 1
-
-# 2. Identify the Public Connection (Internet)
-# Usually Wi-Fi or Ethernet that is connected
-$publicConn = $m.EnumEveryConnection | Where-Object { 
-    $props = $m.NetConnectionProps($_)
-    ($props.Name -eq "Wi-Fi" -or $props.Name -eq "Ethernet") -and $_ -ne $privateConn
-} | Select-Object -First 1
-
-if (-not $publicConn -or -not $privateConn) {
-    Write-Error "Could not identify adapters for ICS. Public: $($m.NetConnectionProps($publicConn).Name), Private: $($m.NetConnectionProps($privateConn).Name)"
-    exit 1
+# 1. Self-elevation to Administrator if not already running as admin
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "[!] This script must be run as Administrator. Attempting to elevate..." -ForegroundColor Red
+    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+    exit
 }
 
-Write-Host "Enabling ICS: $($m.NetConnectionProps($publicConn).Name) -> $($m.NetConnectionProps($privateConn).Name)"
+# 2. Automatically detect adapters if not provided
+if (-not $SourceAdapterName -or -not $TargetAdapterName) {
+    Write-Host "[*] Detecting network adapters..." -ForegroundColor Cyan
+    
+    # Source is usually the one with a gateway
+    $SourceAdapter = Get-NetRoute | Where-Object { $_.DestinationPrefix -eq '0.0.0.0/0' } | Get-NetAdapter | Select-Object -First 1
+    
+    # Target is usually the Microsoft Wi-Fi Direct Virtual Adapter
+    $TargetAdapter = Get-NetAdapter | Where-Object { $_.InterfaceDescription -like "*Wi-Fi Direct Virtual Adapter*" } | Select-Object -First 1
 
-$publicConfig = $m.INetSharingConfigurationForINetConnection($publicConn)
-$privateConfig = $m.INetSharingConfigurationForINetConnection($privateConn)
+    if (-not $SourceAdapter) {
+        Write-Host "[!] Could not detect source adapter with internet access." -ForegroundColor Red
+        return
+    }
+    if (-not $TargetAdapter) {
+        Write-Host "[!] Could not detect target hotspot adapter." -ForegroundColor Red
+        return
+    }
 
-# Enable sharing
-$publicConfig.EnableSharing(0) # 0 = Public
-$privateConfig.EnableSharing(1) # 1 = Private
+    $SourceAdapterName = $SourceAdapter.Name
+    $TargetAdapterName = $TargetAdapter.Name
+}
 
-Write-Host "ICS Enabled Successfully."
+Write-Host "[*] Source Adapter: $SourceAdapterName" -ForegroundColor Green
+Write-Host "[*] Target Adapter: $TargetAdapterName" -ForegroundColor Green
+
+# 3. Enable ICS using COM objects (The standard Windows way)
+try {
+    $NetSharingManager = New-Object -ComObject HNetCfg.HNetShare
+    
+    $SourceConn = $null
+    $TargetConn = $null
+
+    foreach ($conn in $NetSharingManager.EnumEveryConnection) {
+        $props = $NetSharingManager.NetConnectionProps($conn)
+        if ($props.Name -eq $SourceAdapterName) {
+            $SourceConn = $NetSharingManager.INetSharingConfigurationForINetConnection($conn)
+        }
+        if ($props.Name -eq $TargetAdapterName) {
+            $TargetConn = $NetSharingManager.INetSharingConfigurationForINetConnection($conn)
+        }
+    }
+
+    if ($SourceConn -and $TargetConn) {
+        Write-Host "[*] Enabling ICS..." -ForegroundColor Yellow
+        $SourceConn.EnableSharing(0) # 0 = Public (Internet)
+        $TargetConn.EnableSharing(1) # 1 = Private (Local)
+        Write-Host "[+] ICS enabled successfully!" -ForegroundColor Green
+    } else {
+        Write-Host "[!] Failed to find one or both connections in NetSharingManager." -ForegroundColor Red
+    }
+} catch {
+    Write-Host "[!] Error enabling ICS: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+# 4. Ensure the hotspot service is actually started (if needed)
+# netsh wlan start hostednetwork # (Old way)
+# Powershell can also use: Start-Process powershell -ArgumentList "Start-Service WlanSvc"

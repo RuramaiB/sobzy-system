@@ -13,6 +13,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -114,40 +116,84 @@ public class DeviceService {
         log.info("Device deleted: {}", deviceId);
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public List<DeviceResponse> scanNetwork() {
-        log.info("Starting network scan simulation...");
-        // In a real scenario, this would use nmap or similar tools
-        // We simulate finding 2 new devices
-        User admin = userRepository.findByUsername("admin").orElse(null);
-        if (admin == null)
-            admin = userRepository.findAll().get(0);
+        log.info("Starting actual network scan via hotspot clients (non-persistent)...");
 
-        Device d1 = Device.builder()
-                .user(admin)
-                .deviceName("Laboratory-PC-09")
-                .macAddress("DE:AD:BE:EF:01:23")
-                .ipAddress("192.168.1.109")
-                .deviceType("Desktop")
-                .status(DeviceStatus.ACTIVE)
-                .lastSeen(LocalDateTime.now())
-                .build();
+        String scriptPath = "scripts/get_clients.ps1";
+        String output = runPowerShell("-File " + scriptPath);
 
-        Device d2 = Device.builder()
-                .user(admin)
-                .deviceName("Unknown-Android-Device")
-                .macAddress("CA:FE:BA:BE:44:55")
-                .ipAddress("192.168.1.144")
-                .deviceType("Mobile")
-                .status(DeviceStatus.ACTIVE)
-                .lastSeen(LocalDateTime.now())
-                .build();
+        if (output.startsWith("ERROR:")) {
+            log.error("Failed to fetch hotspot clients: {}", output);
+            return List.of();
+        }
 
-        deviceRepository.save(d1);
-        deviceRepository.save(d2);
+        if (output.contains("INFO:No clients connected")) {
+            log.info("No clients currently connected to hotspot.");
+            return List.of();
+        }
 
-        log.info("Network scan complete. Discovered 2 new devices.");
-        return List.of(convertToResponse(d1), convertToResponse(d2));
+        List<DeviceResponse> discoveredDevices = new java.util.ArrayList<>();
+        String[] lines = output.split("\\r?\\n");
+
+        for (String line : lines) {
+            if (line.startsWith("DEVICE|")) {
+                try {
+                    String mac = null;
+                    String ip = null;
+                    String hostname = "Unknown Device";
+
+                    String[] parts = line.split("\\|");
+                    for (String part : parts) {
+                        if (part.startsWith("MAC:"))
+                            mac = part.substring(4).trim();
+                        else if (part.startsWith("IP:"))
+                            ip = part.substring(3).trim();
+                        else if (part.startsWith("HOSTNAME:"))
+                            hostname = part.substring(9).trim();
+                    }
+
+                    if (mac != null) {
+                        DeviceResponse response = DeviceResponse.builder()
+                                .macAddress(mac)
+                                .ipAddress(ip)
+                                .deviceName(hostname)
+                                .deviceType(hostname.toLowerCase().contains("android") ||
+                                        hostname.toLowerCase().contains("iphone") ? "Mobile" : "Desktop")
+                                .status("ACTIVE")
+                                .lastSeen(LocalDateTime.now())
+                                .build();
+                        discoveredDevices.add(response);
+                    }
+                } catch (Exception e) {
+                    log.error("Error parsing device line: {}", line, e);
+                }
+            }
+        }
+
+        log.info("Network scan complete. Discovered {} devices.", discoveredDevices.size());
+        return discoveredDevices;
+    }
+
+    private String runPowerShell(String command) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", command);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+
+            StringBuilder output = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line).append("\n");
+                }
+            }
+            p.waitFor();
+            return output.toString().trim();
+        } catch (Exception e) {
+            log.error("Failed to execute PowerShell: {}", command, e);
+            return "ERROR: " + e.getMessage();
+        }
     }
 
     private DeviceResponse convertToResponse(Device device) {

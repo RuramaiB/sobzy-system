@@ -117,6 +117,14 @@ public class TrafficController {
         return ResponseEntity.ok(trafficLogService.classify(request));
     }
 
+    @PostMapping("/block")
+    public ResponseEntity<MessageResponse> blockDomain(@RequestParam String domain,
+            @RequestParam(defaultValue = "Blocked from monitor") String reason) {
+        log.info("Request to block domain: {}", domain);
+        trafficLogService.blockDomain(domain, reason);
+        return ResponseEntity.ok(MessageResponse.success("Domain " + domain + " blocked successfully"));
+    }
+
     @GetMapping("/health")
     public ResponseEntity<MessageResponse> health() {
         return ResponseEntity.ok(MessageResponse.success("Traffic service is running"));

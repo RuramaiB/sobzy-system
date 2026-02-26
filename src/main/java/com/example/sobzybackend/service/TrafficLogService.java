@@ -4,11 +4,11 @@ import com.example.sobzybackend.dtos.ClassificationRequest;
 import com.example.sobzybackend.dtos.ClassificationResult;
 import com.example.sobzybackend.dtos.TrafficLogResponse;
 import com.example.sobzybackend.dtos.TrafficStatisticsResponse;
-import com.example.sobzybackend.models.TrafficLog;
+import com.example.sobzybackend.models.BlockedSite;
+import com.example.sobzybackend.models.Category;
 import com.example.sobzybackend.models.Device;
-import com.example.sobzybackend.repository.TrafficLogRepository;
-import com.example.sobzybackend.repository.UserRepository;
-import com.example.sobzybackend.repository.DeviceRepository;
+import com.example.sobzybackend.models.TrafficLog;
+import com.example.sobzybackend.repository.*;
 import com.example.sobzybackend.users.User;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +33,8 @@ public class TrafficLogService {
     private final PortalService portalService;
     private final UserRepository userRepository;
     private final DeviceRepository deviceRepository;
+    private final BlockedSiteRepository blockedSiteRepository;
+    private final CategoryRepository categoryRepository;
 
     @Transactional(readOnly = true)
     public Page<TrafficLogResponse> getAllTrafficLogs(Pageable pageable) {
@@ -47,7 +49,17 @@ public class TrafficLogService {
         // 1. Get classification from ML model
         ClassificationResult result = pythonBridgeService.classify(request);
 
-        // 2. Identify User and Device
+        // 2. Override with local policy (Blocked Sites)
+        String domain = extractDomain(request.getUrl());
+        blockedSiteRepository.findByUrl(domain).ifPresent(site -> {
+            if (site.isActive()) {
+                result.setIsAllowed(false);
+                result.setDecision("BLOCK");
+                result.setReason("Site is blocked by policy: " + site.getReason());
+            }
+        });
+
+        // 3. Identify User and Device
         String username = portalService.getUsernameForIp(request.getIpAddress());
         if (username == null)
             username = "guest";
@@ -70,12 +82,16 @@ public class TrafficLogService {
                     .orElseGet(() -> deviceRepository.findAll().stream().findFirst().orElse(null));
         }
 
-        if (device == null || user == null) {
-            log.warn("Missing user/device for IP {}, log will not be persisted", request.getIpAddress());
-            return result;
+        // Note: Even if user/device is null, we STILL persist the log (Anonymous/Guest)
+        // This ensures 100% coverage as requested by the user.
+
+        // 4. Map Category
+        Category category = null;
+        if (result.getCategory() != null) {
+            category = categoryRepository.findByName(result.getCategory().toUpperCase()).orElse(null);
         }
 
-        // 3. Persist Log
+        // 5. Persist Log
         TrafficLog logEntry = TrafficLog.builder()
                 .user(user)
                 .device(device)
@@ -85,6 +101,7 @@ public class TrafficLogService {
                 .ipAddress(request.getIpAddress())
                 .userAgent(request.getUserAgent())
                 .referer(request.getReferer())
+                .category(category)
                 .classificationConfidence(java.math.BigDecimal.valueOf(result.getConfidence()))
                 .isBlocked(!result.getIsAllowed())
                 .blockReason(result.getReason())
@@ -95,6 +112,20 @@ public class TrafficLogService {
 
         trafficLogRepository.save(logEntry);
         return result;
+    }
+
+    @Transactional
+    public void blockDomain(String domain, String reason) {
+        log.info("Blocking domain: {} for reason: {}", domain, reason);
+        if (!blockedSiteRepository.existsByUrl(domain)) {
+            BlockedSite site = BlockedSite.builder()
+                    .url(domain)
+                    .reason(reason)
+                    .active(true)
+                    .createdAt(LocalDateTime.now())
+                    .build();
+            blockedSiteRepository.save(site);
+        }
     }
 
     @Transactional(readOnly = true)
@@ -160,13 +191,29 @@ public class TrafficLogService {
         log.info("Deleted traffic logs older than {} days", daysToKeep);
     }
 
+    private String extractDomain(String url) {
+        try {
+            if (url == null)
+                return "";
+            String host = url;
+            if (url.contains("://")) {
+                host = new java.net.URL(url).getHost();
+            } else if (url.contains("/")) {
+                host = url.split("/")[0];
+            }
+            return host.toLowerCase();
+        } catch (Exception e) {
+            return url;
+        }
+    }
+
     private TrafficLogResponse convertToResponse(TrafficLog log) {
         return TrafficLogResponse.builder()
                 .id(log.getId())
-                .userId(log.getUser().getId())
-                .username(log.getUser().getUsername())
-                .deviceId(log.getDevice().getId())
-                .deviceName(log.getDevice().getDeviceName())
+                .userId(log.getUser() != null ? log.getUser().getId() : null)
+                .username(log.getUser() != null ? log.getUser().getUsername() : "Guest")
+                .deviceId(log.getDevice() != null ? log.getDevice().getId() : null)
+                .deviceName(log.getDevice() != null ? log.getDevice().getDeviceName() : "Unknown Device")
                 .url(log.getUrl())
                 .domain(log.getDomain())
                 .method(log.getMethod())
