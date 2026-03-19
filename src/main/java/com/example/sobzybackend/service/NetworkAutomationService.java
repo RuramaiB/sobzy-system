@@ -33,7 +33,7 @@ public class NetworkAutomationService {
 
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
     private Process proxyProcess;
-    private final String HOST_IP = "192.168.137.1";
+    private String hostIp = "192.168.137.1";
 
     @PostConstruct
     public void init() {
@@ -122,20 +122,24 @@ public class NetworkAutomationService {
             executeCommand("netsh interface portproxy reset");
             executeCommand(String.format(
                     "netsh interface portproxy add v4tov4 listenport=80 listenaddress=%s connectport=8080 connectaddress=%s",
-                    HOST_IP, HOST_IP));
+                    this.hostIp, this.hostIp));
             executeCommand(String.format(
                     "netsh interface portproxy add v4tov4 listenport=443 listenaddress=%s connectport=8080 connectaddress=%s",
-                    HOST_IP, HOST_IP));
+                    this.hostIp, this.hostIp));
 
-            // 4. Start DNS & Proxy
+            // 4. Update Host IP dynamically if possible
+            this.hostIp = detectHostIp();
+            log.info("Detected Hotspot IP: {}", this.hostIp);
+
+            // 5. Start DNS & Proxy
             log.info("Launching IWACS Pure Java Engine (DNS + Proxy)...");
-            embeddedDnsServer.startDns(HOST_IP);
-            embeddedProxyServer.startProxy(HOST_IP);
+            embeddedDnsServer.startDns(this.hostIp);
+            embeddedProxyServer.startProxy(this.hostIp);
 
             HotspotInfoResponse runningState = HotspotInfoResponse.builder()
                     .ssid(ssid)
                     .password(password)
-                    .hostIp(HOST_IP)
+                    .hostIp(this.hostIp)
                     .status("RUNNING")
                     .connectedDevices(new ArrayList<>())
                     .build();
@@ -147,6 +151,24 @@ public class NetworkAutomationService {
             log.error("Failed to run network automation sequence", e);
             updateFailureState("SETUP_FAILED");
         }
+    }
+
+    private String detectHostIp() {
+        try {
+            // Priority: 192.168.137.1 (Standard Hotspot), then 172.24.x.x (Some Windows
+            // setups)
+            ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command",
+                    "(Get-NetIPAddress | Where-Object { $_.AddressFamily -eq 'IPv4' -and ($_.IPAddress -like '172.24.*' -or $_.IPAddress -like '192.168.137.*') }).IPAddress | Select-Object -First 1");
+            Process p = pb.start();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String ip = reader.readLine();
+            if (ip != null && !ip.trim().isEmpty()) {
+                return ip.trim();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to detect dynamic host IP, falling back to default: {}", e.getMessage());
+        }
+        return "192.168.137.1";
     }
 
     private void updateFailureState(String errorStatus) {

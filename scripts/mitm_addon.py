@@ -7,7 +7,7 @@ from datetime import datetime
 from mitmproxy import http
 
 # Configuration
-BACKEND_URL = "http://localhost:8080/api/traffic/ingest"
+BACKEND_URL = "http://localhost:1998/api/traffic/ingest"
 POLL_INTERVAL = 30 # Seconds to fallback poll if no traffic
 
 class TrafficIngestor:
