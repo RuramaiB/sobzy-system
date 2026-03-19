@@ -27,7 +27,13 @@ public class RedirectionController {
         String url = request.getRequestURL().toString();
         String host = request.getHeader("Host");
 
-        // 1. Skip redirection for portal/api itself
+        // 1. Skip redirection for portal/api itself OR if it's the host machine
+        // (loopback)
+        if (clientIp.equals("127.0.0.1") || clientIp.equals("0:0:0:0:0:0:0:1") || clientIp.equals("localhost")) {
+            log.debug("Skipping redirection for local host: {}", clientIp);
+            return null;
+        }
+
         if (host != null && (host.contains("localhost") || host.contains("127.0.0.1") || host.contains("192.168.137.1")
                 || host.contains("172.24."))) {
             if (url.contains("/login") || url.contains("/api") || url.contains("/_nuxt")

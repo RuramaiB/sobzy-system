@@ -182,11 +182,18 @@ public class TrafficLogService {
             topDomains.put((String) row[0], (Long) row[1]);
         }
 
+        long activeDevices = deviceRepository.countByStatus(com.example.sobzybackend.enums.DeviceStatus.ACTIVE);
+        long activeUsers = portalService.getAuthenticatedIps().values().stream().distinct().count();
+        long totalBandwidth = trafficLogRepository.sumTotalSize();
+
         return TrafficStatisticsResponse.builder()
                 .totalRequests(totalRequests)
                 .blockedRequests(blockedRequests)
                 .allowedRequests(allowedRequests)
                 .blockRate(blockRate)
+                .activeDevices(activeDevices)
+                .activeUsers(activeUsers)
+                .totalBandwidth(totalBandwidth)
                 .trafficByCategory(trafficByCategory)
                 .topDomains(topDomains)
                 .build();

@@ -1,6 +1,5 @@
 package com.example.sobzybackend.repository;
 
-
 import com.example.sobzybackend.models.TrafficLog;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -23,12 +22,12 @@ public interface TrafficLogRepository extends JpaRepository<TrafficLog, Long> {
 
     @Query("SELECT t FROM TrafficLog t WHERE t.requestTimestamp BETWEEN :startDate AND :endDate")
     List<TrafficLog> findByDateRange(@Param("startDate") LocalDateTime startDate,
-                                     @Param("endDate") LocalDateTime endDate);
+            @Param("endDate") LocalDateTime endDate);
 
     @Query("SELECT t FROM TrafficLog t WHERE t.user.id = :userId AND t.requestTimestamp BETWEEN :startDate AND :endDate")
     List<TrafficLog> findByUserAndDateRange(@Param("userId") Long userId,
-                                            @Param("startDate") LocalDateTime startDate,
-                                            @Param("endDate") LocalDateTime endDate);
+            @Param("startDate") LocalDateTime startDate,
+            @Param("endDate") LocalDateTime endDate);
 
     @Query("SELECT t FROM TrafficLog t WHERE t.domain = :domain ORDER BY t.requestTimestamp DESC")
     List<TrafficLog> findByDomain(@Param("domain") String domain, Pageable pageable);
@@ -53,6 +52,9 @@ public interface TrafficLogRepository extends JpaRepository<TrafficLog, Long> {
 
     @Query("SELECT t FROM TrafficLog t WHERE t.requestTimestamp >= :since ORDER BY t.requestTimestamp DESC")
     List<TrafficLog> findRecentTraffic(@Param("since") LocalDateTime since, Pageable pageable);
+
+    @Query("SELECT COALESCE(SUM(t.requestSize + t.responseSize), 0) FROM TrafficLog t")
+    long sumTotalSize();
 
     void deleteByRequestTimestampBefore(LocalDateTime date);
 }

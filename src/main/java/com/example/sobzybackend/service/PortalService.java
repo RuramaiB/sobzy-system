@@ -63,6 +63,13 @@ public class PortalService {
      */
     private String getMacFromArp(String ipAddress) {
         try {
+            // Ping first to ensure the entry is in the ARP table
+            try {
+                new ProcessBuilder("ping", "-n", "1", "-w", "500", ipAddress).start().waitFor();
+            } catch (Exception pe) {
+                // Ignore ping failures
+            }
+
             ProcessBuilder pb = new ProcessBuilder("arp", "-a", ipAddress);
             Process process = pb.start();
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
