@@ -190,6 +190,41 @@
             <artifactId>async-http-client</artifactId>
             <version>2.12.3</version>
         </dependency>
+        <!-- Smile ML Engine -->
+        <dependency>
+            <groupId>com.github.haifengl</groupId>
+            <artifactId>smile-core</artifactId>
+            <version>3.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.haifengl</groupId>
+            <artifactId>smile-mkl</artifactId>
+            <version>3.0.0</version>
+        </dependency>
+
+        <!-- Embedded MITM Proxy & DNS -->
+        <dependency>
+            <groupId>com.browserup</groupId>
+            <artifactId>browserup-proxy-core</artifactId>
+            <version>2.1.2</version>
+            <exclusions>
+                <exclusion>
+                    <!-- Spring Boot provides slf4j implementation -->
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-slf4j-impl</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>com.browserup</groupId>
+            <artifactId>browserup-proxy-mitm</artifactId>
+            <version>2.1.2</version>
+        </dependency>
+        <dependency>
+            <groupId>dnsjava</groupId>
+            <artifactId>dnsjava</artifactId>
+            <version>3.5.2</version>
+        </dependency>
     </dependencies>
 
     <build>

@@ -116,6 +116,26 @@ public class DeviceService {
         log.info("Device deleted: {}", deviceId);
     }
 
+    @Transactional
+    public void markAllDevicesInactive() {
+        log.info("Marking all devices as INACTIVE (Syncing with Hotspot state)");
+        List<Device> activeDevices = deviceRepository.findByStatus(DeviceStatus.ACTIVE);
+        for (Device device : activeDevices) {
+            device.setStatus(DeviceStatus.INACTIVE);
+        }
+        deviceRepository.saveAll(activeDevices);
+    }
+
+    @Transactional
+    public void updateDeviceStatus(String macAddress, com.example.sobzybackend.enums.DeviceStatus status) {
+        deviceRepository.findByMacAddress(macAddress).ifPresent(device -> {
+            log.info("Updating device {} status to {}", macAddress, status);
+            device.setStatus(status);
+            device.setLastSeen(LocalDateTime.now());
+            deviceRepository.save(device);
+        });
+    }
+
     @Transactional(readOnly = true)
     public List<DeviceResponse> scanNetwork() {
         log.info("Starting actual network scan via hotspot clients (non-persistent)...");

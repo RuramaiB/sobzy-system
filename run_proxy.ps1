@@ -1,34 +1,46 @@
 # PowerShell script to start mitmproxy with the IWACS addon
-# This script ensures firewall rules are set and starts the proxy correctly
+# This script handles its own elevation if not run as Admin.
 
-$pythonPath = "C:\Python314\python.exe"
-$addonPath = "src/main/python/mitm_addon.py"
+param(
+    [string]$pythonPath = "python",
+    [string]$addonPath = "scripts/mitm_addon.py"
+)
+
+# 1. Self-Elevate if needed
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "[!] Restarting with Administrator privileges..." -ForegroundColor Yellow
+    $args = "-ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    if ($PSBoundParameters.Count -gt 0) {
+        foreach ($key in $PSBoundParameters.Keys) {
+            $args += " -$key `"$($PSBoundParameters[$key])`""
+        }
+    }
+    Start-Process powershell -ArgumentList $args -Verb RunAs -Wait
+    exit $LASTEXITCODE
+}
 
 Write-Host "====================================================" -ForegroundColor Cyan
-Write-Host "   IWACS TRAFFIC PROXY & REDIRECTION ENGINE         " -ForegroundColor Cyan -BackgroundColor DarkBlue
+Write-Host "   SOBZY TRAFFIC PROXY & REDIRECTION ENGINE         " -ForegroundColor Cyan -BackgroundColor DarkBlue
 Write-Host "====================================================" -ForegroundColor Cyan
 
-# 1. Open Firewall ports (Requires Admin usually)
+# 2. Open Firewall ports
 Write-Host "[*] Configuring Windows Firewall..." -ForegroundColor Gray
-netsh advfirewall firewall add rule name="IWACS-DNS-Hijacker" dir=in action=allow protocol=UDP localport=53
-netsh advfirewall firewall add rule name="IWACS-HTTP-Redirection" dir=in action=allow protocol=TCP localport=80
+netsh advfirewall firewall add rule name="Sobzy-Proxy-8080" dir=in action=allow protocol=TCP localport=8080 profile=any
 
-# 2. Identify Host IP for logging
+# 3. Identify Host IP for port forwarding
 $hostIp = (Get-NetIPAddress | Where-Object { $_.AddressFamily -eq 'IPv4' -and ($_.IPAddress -like '172.24.*' -or $_.IPAddress -like '192.168.137.*') }).IPAddress
 if ($hostIp -is [array]) { $hostIp = $hostIp[0] }
-if (-not $hostIp) { $hostIp = "172.24.64.1" }
+if (-not $hostIp) { $hostIp = "192.168.137.1" }
 
-Write-Host "[*] Hotspot IP identified: $hostIp" -ForegroundColor Green
-
-# 3. Port Forwarding for Zero-Config (WPAD & Transparent Interception)
-Write-Host "[*] Setting up Port Forwarding (80/443 -> 8080)..." -ForegroundColor Gray
+Write-Host "[*] Configuring Port Forwarding (80/443 -> 8080) on $hostIp..." -ForegroundColor Gray
+netsh interface portproxy reset # Reset to avoid conflicts
 netsh interface portproxy add v4tov4 listenport=80 listenaddress=$hostIp connectport=8080 connectaddress=$hostIp
 netsh interface portproxy add v4tov4 listenport=443 listenaddress=$hostIp connectport=8080 connectaddress=$hostIp
 
-# 3. Start mitmproxy (using python module mode)
+# 4. Start mitmproxy
 Write-Host "[*] Starting mitmdump with addon: $addonPath" -ForegroundColor Yellow
 Write-Host "    Press Ctrl+C to stop."
 Write-Host "----------------------------------------------------"
 
-# We run as a separate process to avoid blocking this shell
-& $pythonPath -u -m mitmproxy.tools.dump -s $addonPath --mode regular
+& $pythonPath -m mitmproxy.tools.dump -s $addonPath --mode regular --listen-port 8080 --listen-host 0.0.0.0

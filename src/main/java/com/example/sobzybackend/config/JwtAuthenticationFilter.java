@@ -1,6 +1,5 @@
 package com.example.sobzybackend.config;
 
-
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -35,8 +34,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(
             @NonNull HttpServletRequest request,
             @NonNull HttpServletResponse response,
-            @NonNull FilterChain filterChain
-    ) throws ServletException, IOException {
+            @NonNull FilterChain filterChain) throws ServletException, IOException {
 
         // Skip filter for public endpoints
         if (isPublicEndpoint(request.getServletPath())) {
@@ -74,13 +72,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                             userDetails,
                             null,
-                            userDetails.getAuthorities()
-                    );
+                            userDetails.getAuthorities());
 
                     // Set additional details
                     authToken.setDetails(
-                            new WebAuthenticationDetailsSource().buildDetails(request)
-                    );
+                            new WebAuthenticationDetailsSource().buildDetails(request));
 
                     // Update security context
                     SecurityContextHolder.getContext().setAuthentication(authToken);
@@ -100,10 +96,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
      */
     private boolean isPublicEndpoint(String path) {
         return path.startsWith("/api/v1/auth/") ||
-                path.startsWith("/api-docs") ||
-                path.startsWith("/swagger-ui") ||
+                path.startsWith("/api/v1/portal/") ||
                 path.equals("/actuator/health") ||
                 path.equals("/actuator/info");
     }
 }
-

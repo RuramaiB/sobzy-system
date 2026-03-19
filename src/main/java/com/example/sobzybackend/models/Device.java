@@ -45,7 +45,7 @@ public class Device {
     private String browserInfo;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(name = "device_status", nullable = false, length = 100)
     @Builder.Default
     private DeviceStatus status = DeviceStatus.ACTIVE;
 

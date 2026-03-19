@@ -16,7 +16,6 @@ import java.io.InputStreamReader;
 public class HotspotBootstrapService implements ApplicationRunner {
 
     private final HotspotService hotspotService;
-    private final ProxyManagementService proxyManagementService;
 
     @Override
     public void run(ApplicationArguments args) throws Exception {
@@ -31,13 +30,7 @@ public class HotspotBootstrapService implements ApplicationRunner {
         // 3. Dry-run PowerShell
         checkPowerShell();
 
-        // 4. Initial Configuration
-        configureHotspotOnStartup();
-
-        // 5. Start Traffic Monitoring Proxy
-        proxyManagementService.startProxy();
-
-        log.info("=== Validation Complete ===");
+        log.info("Hotspot Environment Validation Complete.");
     }
 
     private void checkPython() {
@@ -62,13 +55,13 @@ public class HotspotBootstrapService implements ApplicationRunner {
     }
 
     private void checkScripts() {
-        String[] requiredScripts = { "scripts/get_clients.ps1", "scripts/enable_ics.ps1" };
+        String[] requiredScripts = { "src/main/python/mitm_addon.py" };
         for (String script : requiredScripts) {
             File file = new File(script);
             if (file.exists()) {
-                log.info("Script found: {}", script);
+                log.info("Found component: {}", script);
             } else {
-                log.error("CRITICAL: Script NOT found: {}", script);
+                log.error("CRITICAL ERROR: Component NOT found: {}", script);
             }
         }
     }
@@ -89,19 +82,5 @@ public class HotspotBootstrapService implements ApplicationRunner {
         } catch (Exception e) {
             log.error("PowerShell dry-run failed: {}", e.getMessage());
         }
-    }
-
-    private void configureHotspotOnStartup() {
-        log.info("Performing initial hotspot configuration...");
-        // Check if hotspot is already running and enable ICS if so
-        hotspotService.getHotspotDetails().thenAccept(details -> {
-            if ("On".equalsIgnoreCase(details.getStatus())
-                    || "PeerTetheringOperational".equalsIgnoreCase(details.getStatus())) {
-                log.info("Hotspot is active. Re-enabling ICS for reliability...");
-                hotspotService.startHotspot(); // Reuse startHotspot logic to trigger ICS
-            } else {
-                log.info("Hotspot is not active. Configuration will run upon start.");
-            }
-        });
     }
 }

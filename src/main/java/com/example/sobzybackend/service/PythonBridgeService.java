@@ -1,6 +1,5 @@
 package com.example.sobzybackend.service;
 
-
 import com.example.sobzybackend.dtos.ClassificationRequest;
 import com.example.sobzybackend.dtos.ClassificationResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -93,8 +92,7 @@ public class PythonBridgeService {
                 pythonPath,
                 scriptFile,
                 request.getUrl(),
-                request.getContent() != null ? request.getContent() : ""
-        );
+                request.getContent() != null ? request.getContent() : "");
 
         processBuilder.redirectErrorStream(true);
         Process process = processBuilder.start();
@@ -168,24 +166,32 @@ public class PythonBridgeService {
     }
 
     /**
-     * Test Python connectivity
+     * Test Python connectivity and attempt auto-correction if it fails
      */
     public boolean testPythonConnection() {
-        try {
-            ProcessBuilder pb = new ProcessBuilder(pythonPath, "--version");
-            Process process = pb.start();
-            boolean completed = process.waitFor(5, TimeUnit.SECONDS);
+        if (checkPython(pythonPath)) {
+            return true;
+        }
 
-            if (completed && process.exitValue() == 0) {
-                log.info("Python connection test successful");
+        log.warn("Configured Python path '{}' failed. Searching for Python...", pythonPath);
+        String[] commonPaths = { "python", "python3", "py" };
+        for (String path : commonPaths) {
+            if (checkPython(path)) {
+                log.info("Auto-detected Python at: {}", path);
+                this.pythonPath = path;
                 return true;
             }
+        }
 
-            log.error("Python connection test failed");
-            return false;
+        return false;
+    }
 
+    private boolean checkPython(String path) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(path, "--version");
+            Process process = pb.start();
+            return process.waitFor(3, TimeUnit.SECONDS) && process.exitValue() == 0;
         } catch (Exception e) {
-            log.error("Error testing Python connection: {}", e.getMessage());
             return false;
         }
     }

@@ -29,7 +29,7 @@ import java.util.stream.Collectors;
 public class TrafficLogService {
 
     private final TrafficLogRepository trafficLogRepository;
-    private final PythonBridgeService pythonBridgeService;
+    private final ClassificationService classificationService;
     private final PortalService portalService;
     private final UserRepository userRepository;
     private final DeviceRepository deviceRepository;
@@ -47,7 +47,7 @@ public class TrafficLogService {
         log.info("Classifying traffic for IP: {}, URL: {}", request.getIpAddress(), request.getUrl());
 
         // 1. Get classification from ML model
-        ClassificationResult result = pythonBridgeService.classify(request);
+        ClassificationResult result = classificationService.classify(request);
 
         // 2. Override with local policy (Blocked Sites)
         String domain = extractDomain(request.getUrl());
@@ -64,7 +64,8 @@ public class TrafficLogService {
         if (username == null)
             username = "guest";
 
-        User user = userRepository.findByUsername(username)
+        final String userKey = username;
+        User user = userRepository.findByUsernameOrEmail(userKey, userKey)
                 .orElseGet(() -> userRepository.findAll().stream().findFirst().orElse(null));
 
         // Attempt to find device by MAC address for more accurate tracking
@@ -112,6 +113,13 @@ public class TrafficLogService {
 
         trafficLogRepository.save(logEntry);
         return result;
+    }
+
+    @Transactional(readOnly = true)
+    public List<String> getActiveBlockedDomains() {
+        return blockedSiteRepository.findByActive(true).stream()
+                .map(site -> site.getUrl())
+                .collect(Collectors.toList());
     }
 
     @Transactional
