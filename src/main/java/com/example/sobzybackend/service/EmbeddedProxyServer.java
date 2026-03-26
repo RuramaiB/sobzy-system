@@ -6,36 +6,34 @@ import com.browserup.bup.filters.RequestFilter;
 import com.browserup.bup.filters.ResponseFilter;
 import com.browserup.bup.util.HttpMessageContents;
 import com.browserup.bup.util.HttpMessageInfo;
-import org.littleshoot.proxy.MitmManager;
-import javax.net.ssl.SSLEngine;
-import javax.net.ssl.SSLSession;
-import com.example.sobzybackend.service.PortalService;
 import com.example.sobzybackend.service.ClassificationService;
 import com.example.sobzybackend.service.TrafficLogService;
-import com.browserup.bup.mitm.KeyStoreCertificateSource;
-import com.browserup.bup.mitm.manager.ImpersonatingMitmManager;
-import org.springframework.core.io.ClassPathResource;
-import java.io.InputStream;
-import java.security.KeyStore;
 
 import com.example.sobzybackend.dtos.ClassificationRequest;
 import com.example.sobzybackend.dtos.ClassificationResult;
 import io.netty.handler.codec.http.*;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class EmbeddedProxyServer {
+    private static final Logger log = LoggerFactory.getLogger(EmbeddedProxyServer.class);
 
     private final PortalService portalService;
     private final TrafficLogService trafficLogService;
     private final ClassificationService classificationService;
+
+    public EmbeddedProxyServer(PortalService portalService,
+                               TrafficLogService trafficLogService,
+                               ClassificationService classificationService) {
+        this.portalService = portalService;
+        this.trafficLogService = trafficLogService;
+        this.classificationService = classificationService;
+    }
 
     private BrowserUpProxy proxy;
     private boolean isRunning = false;
@@ -49,22 +47,12 @@ public class EmbeddedProxyServer {
         try {
             proxy = new BrowserUpProxyServer();
             proxy.setTrustAllServers(true);
-            // Configure MITM with custom CA from classpath-loaded PKCS12 keystore
-            InputStream is = new ClassPathResource("iwacs-ca.p12").getInputStream();
-            KeyStore ks = KeyStore.getInstance("PKCS12");
-            ks.load(is, "password".toCharArray());
 
-            KeyStoreCertificateSource certSource = new KeyStoreCertificateSource(ks, "iwacs-ca", "password");
-
-            ImpersonatingMitmManager baseMitmManager = ImpersonatingMitmManager.builder()
-                    .rootCertificateSource(certSource)
-                    .build();
-
-            // Use our custom WhitelistedMitmManager
-            MitmManager mitmManager = new WhitelistedMitmManager(baseMitmManager, portalService, classificationService);
-
-            proxy.setMitmManager(mitmManager);
-            proxy.setMitmDisabled(false);
+            // MITM is DISABLED intentionally.
+            // For a captive portal, we only need to intercept HTTP (port 80) to redirect unauthenticated users.
+            // HTTPS is tunneled transparently — no cert errors, no certificate_unknown rejections.
+            // Attempting MITM causes NullPointerException in LittleProxy when bypassing per-connection.
+            proxy.setMitmDisabled(true);
 
             // Listen on port 8080
             proxy.start(8080);
@@ -73,7 +61,7 @@ public class EmbeddedProxyServer {
             configureFilters(hostIp);
 
             isRunning = true;
-            log.info("Embedded MITM Proxy started successfully on {}:8080", hostIp);
+            log.info("Embedded Transparent Proxy started successfully on {}:8080", hostIp);
         } catch (Exception e) {
             log.error("Failed to start Embedded MITM Proxy", e);
             isRunning = false;
@@ -114,33 +102,77 @@ public class EmbeddedProxyServer {
                 }
 
                 String hostHeader = request.headers().get(HttpHeaderNames.HOST);
+                boolean isAuth = portalService.isIpAuthenticated(clientIp);
+
+                // 1. Local/Portal Traffic Bypass & Redirection
                 if (url.contains(hostIp) || url.contains("localhost")
                         || (hostHeader != null && (hostHeader.contains(hostIp) || hostHeader.contains(":1998")
                                 || hostHeader.contains(":3000")))) {
+                    
+                    // IF it's a request to Host IP on port 80 (likely redirected from 80), 302 to Portal
+                    // This prevents the proxy-to-host loop
+                    if (hostHeader != null && (hostHeader.equals(hostIp) || hostHeader.equals(hostIp + ":80"))) {
+                         log.info("LOCAL_LOOP_PREVENT: Redirecting direct host request from {} to portal", clientIp);
+                         HttpResponse redirect = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.FOUND);
+                         redirect.headers().set(HttpHeaderNames.LOCATION, portalUrl);
+                         return redirect;
+                    }
+
                     log.debug("Proxy Bypassed for portal/local traffic: URI={}, Host={}", url, hostHeader);
                     return null;
                 }
 
-                // 2. Captive portal check (Redirect unauthenticated users)
-                boolean isAuth = portalService.isIpAuthenticated(clientIp);
-                
-                // Only redirect HTTP GET/HEAD requests to the portal.
-                // Redirecting CONNECT or other methods during handshake leads to SSL errors.
-                if (!isAuth && !request.method().equals(HttpMethod.CONNECT)) {
+                // 2. Captive Portal Probe + Auth Check — unauthenticated users ALWAYS get redirected
+                // Whitelist bypass MUST NOT apply here for unauthenticated users.
+                // OS captive portal probes use whitelisted domains (gstatic.com, apple.com, msftconnecttest.com)
+                // so we must intercept them to show the "Sign in to network" notification.
+                boolean isWhitelisted = classificationService.isWhitelisted(extractDomainFromUrl(url));
+
+                if (!isAuth) {
+                    if (request.method().equals(HttpMethod.CONNECT)) {
+                        // HTTPS CONNECT from unauthenticated: deny with 403.
+                        // This is what triggers Android/iOS/Windows to detect a captive portal
+                        // (the OS falls back to HTTP check → gets 302 → shows portal notification).
+                        log.info("AUTH_DEBUG: DENYING Unauthenticated HTTPS CONNECT from {}. URL={}", clientIp, url);
+                        return new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.FORBIDDEN);
+                    }
+
+                    // HTTP from unauthenticated: always redirect to portal (including probe URLs like /generate_204)
                     log.info("AUTH_DEBUG: REDIRECTING Unauthenticated IP {} to Portal. URL={}", clientIp, url);
                     HttpResponse redirect = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.FOUND);
                     redirect.headers().set(HttpHeaderNames.LOCATION, portalUrl);
                     return redirect;
                 }
 
-                // 3. Whitelist Bypass for Authenticated Users (to avoid SSL errors on trusted sites)
-                String host = hostHeader != null ? hostHeader.split(":")[0] : "";
-                if (classificationService.isWhitelisted(host)) {
-                    log.debug("Whitelist Bypass for {}: URL={}", clientIp, url);
+                // 3. Authenticated user: whitelist bypass (pass through whitelisted sites)
+                if (isWhitelisted) {
+                    log.debug("Whitelist Bypass (Authenticated) for {}: URL={}", clientIp, url);
                     return null;
                 }
 
-                // 4. Traffic Classification (for authenticated users on non-whitelisted sites)
+                // 4. Block HTTPS CONNECT to banned domains (gambling, gaming, torrent, adult)
+                // Since MITM is disabled, we must block at the CONNECT tunnel level for HTTPS.
+                if (request.method().equals(HttpMethod.CONNECT)) {
+                    try {
+                        // For CONNECT, the url is "host:443" — extract just the host
+                        String connectHost = url.contains(":") ? url.split(":")[0] : url;
+                        ClassificationRequest connectReq = new ClassificationRequest();
+                        connectReq.setUrl("https://" + connectHost);
+                        connectReq.setIpAddress(clientIp);
+                        connectReq.setMethod("CONNECT");
+                        connectReq.setUserAgent(request.headers().get(HttpHeaderNames.USER_AGENT));
+                        ClassificationResult connectResult = trafficLogService.classify(connectReq);
+                        if (connectResult != null && !connectResult.getIsAllowed()) {
+                            log.info("BLOCKED HTTPS CONNECT: {} -> {} ({})", clientIp, connectHost, connectResult.getReason());
+                            return new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.FORBIDDEN);
+                        }
+                    } catch (Exception e) {
+                        log.error("HTTPS CONNECT classification failed for {}: {}", clientIp, e.getMessage());
+                    }
+                    return null; // Allow if classification passes
+                }
+
+                // 5. Traffic Classification for HTTP (authenticated users on non-whitelisted sites)
                 try {
                     ClassificationRequest req = new ClassificationRequest();
                     req.setUrl(url);
@@ -151,11 +183,11 @@ public class EmbeddedProxyServer {
 
                     ClassificationResult result = trafficLogService.classify(req);
                     if (result != null && !result.getIsAllowed()) {
-                        String domain = result.getDomain() != null ? result.getDomain() : "unknown";
+                        String blockedDomain = result.getDomain() != null ? result.getDomain() : "unknown";
                         String reason = result.getReason() != null ? result.getReason() : "Security Policy";
                         
                         String html = BLOCK_PAGE_HTML
-                            .replace("{{DOMAIN}}", domain)
+                            .replace("{{DOMAIN}}", blockedDomain)
                             .replace("{{REASON}}", reason);
 
                         DefaultFullHttpResponse forbiddenResponse = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1,
@@ -216,39 +248,19 @@ public class EmbeddedProxyServer {
         });
     }
 
-    @RequiredArgsConstructor
-    private static class WhitelistedMitmManager implements MitmManager {
-        private final ImpersonatingMitmManager delegate;
-        private final PortalService portalService;
-        private final ClassificationService classificationService;
 
-        @Override
-        public SSLEngine serverSslEngine(String peerHost, int peerPort) {
-            return delegate.serverSslEngine(peerHost, peerPort);
-        }
-
-        @Override
-        public SSLEngine serverSslEngine() {
-            return delegate.serverSslEngine();
-        }
-
-        @Override
-        public SSLEngine clientSslEngineFor(HttpRequest request, SSLSession session) {
-            try {
-                String hostHeader = request.headers().get(HttpHeaderNames.HOST);
-                String host = hostHeader != null ? hostHeader.split(":")[0] : "";
-                
-                // 1. Bypass for whitelisted domains (to avoid cert errors on Google, etc.)
-                if (classificationService.isWhitelisted(host)) {
-                    log.debug("SSL Bypass (MITM Disabled) for Whitelisted Host: {}", host);
-                    return null; 
-                }
-
-                return delegate.clientSslEngineFor(request, session);
-            } catch (Exception e) {
-                log.error("Error in WhitelistedMitmManager: {}", e.getMessage());
-                return delegate.clientSslEngineFor(request, session);
+    private String extractDomainFromUrl(String url) {
+        try {
+            if (url == null) return "";
+            String host = url;
+            if (url.contains("://")) {
+                host = new java.net.URL(url).getHost();
+            } else if (url.contains("/")) {
+                host = url.split("/")[0];
             }
+            return host.toLowerCase();
+        } catch (Exception e) {
+            return url;
         }
     }
 }

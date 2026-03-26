@@ -6,8 +6,8 @@ import com.example.sobzybackend.service.PortalService;
 import com.example.sobzybackend.repository.UserRepository;
 import com.example.sobzybackend.users.User;
 import jakarta.servlet.http.HttpServletRequest;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpHeaders;
@@ -16,16 +16,22 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
-@Slf4j
 @RestController
 @RequestMapping("/api/v1/portal")
-@RequiredArgsConstructor
 @CrossOrigin(origins = "*")
 public class PortalController {
+
+    private static final Logger log = LoggerFactory.getLogger(PortalController.class);
 
     private final PortalService portalService;
     private final DeviceService deviceService;
     private final UserRepository userRepository;
+
+    public PortalController(PortalService portalService, DeviceService deviceService, UserRepository userRepository) {
+        this.portalService = portalService;
+        this.deviceService = deviceService;
+        this.userRepository = userRepository;
+    }
 
     @PostMapping("/login-success")
     public ResponseEntity<Map<String, String>> loginSuccess(
@@ -72,19 +78,17 @@ public class PortalController {
         // 3. Automated Device Registration (Phone details linkage)
         try {
             String mac = portalService.getMacForIp(clientIp);
-            if (mac != null) {
-                DeviceRegistrationRequest regRequest = DeviceRegistrationRequest.builder()
-                        .userId(user.getId())
-                        .macAddress(mac)
-                        .ipAddress(clientIp)
-                        .deviceName("Mobile Device (" + email + ")")
-                        .deviceType("Mobile")
-                        .osInfo(request.getHeader("User-Agent"))
-                        .browserInfo("Captive Portal Browser")
-                        .build();
-                deviceService.registerDevice(regRequest);
-                log.info("Auto-registered device for MAC: {}", mac);
-            }
+            DeviceRegistrationRequest regRequest = DeviceRegistrationRequest.builder()
+                    .userId(user.getId())
+                    .macAddress(mac != null ? mac : "00:00:00:00:00:00") // Fallback for visibility
+                    .ipAddress(clientIp)
+                    .deviceName(mac != null ? "Device (" + email + ")" : "Unknown Device (" + email + ")")
+                    .deviceType("Mobile")
+                    .osInfo(request.getHeader("User-Agent"))
+                    .browserInfo("Captive Portal Browser")
+                    .build();
+            deviceService.registerDevice(regRequest);
+            log.info("Auto-registered device for IP: {}, MAC: {}", clientIp, mac);
         } catch (Exception e) {
             log.error("Failed to auto-register device: {}", e.getMessage());
         }
@@ -93,9 +97,9 @@ public class PortalController {
                 "message", "IP authenticated successfully",
                 "ip", clientIp,
                 "user", email,
-                "certUrl", "http://google.com/____iwacs_cert",
+                "certUrl", "http://" + request.getServerName() + ":1998/api/v1/portal/ca-cert",
                 "setupInstructions",
-                "For full security monitoring, please download and INSTALL the certificate from the link below, then 'Trust' it in your device settings."));
+                "For full security monitoring, please download and INSTALL the certificate from the link above, then 'Trust' it in your device settings."));
     }
 
     @GetMapping("/check-auth")

@@ -10,8 +10,6 @@ import com.example.sobzybackend.models.Device;
 import com.example.sobzybackend.models.TrafficLog;
 import com.example.sobzybackend.repository.*;
 import com.example.sobzybackend.users.User;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -23,10 +21,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class TrafficLogService {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(TrafficLogService.class);
 
     private final TrafficLogRepository trafficLogRepository;
     private final ClassificationService classificationService;
@@ -36,83 +33,119 @@ public class TrafficLogService {
     private final BlockedSiteRepository blockedSiteRepository;
     private final CategoryRepository categoryRepository;
 
-    @Transactional(readOnly = true)
-    public Page<TrafficLogResponse> getAllTrafficLogs(Pageable pageable) {
-        return trafficLogRepository.findAll(pageable)
-                .map(this::convertToResponse);
+    public TrafficLogService(TrafficLogRepository trafficLogRepository, 
+                             ClassificationService classificationService,
+                             PortalService portalService,
+                             UserRepository userRepository,
+                             DeviceRepository deviceRepository,
+                             BlockedSiteRepository blockedSiteRepository,
+                             CategoryRepository categoryRepository) {
+        this.trafficLogRepository = trafficLogRepository;
+        this.classificationService = classificationService;
+        this.portalService = portalService;
+        this.userRepository = userRepository;
+        this.deviceRepository = deviceRepository;
+        this.blockedSiteRepository = blockedSiteRepository;
+        this.categoryRepository = categoryRepository;
     }
+
+    private final Map<String, Category> categoryCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, Boolean> blockedDomainCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private LocalDateTime lastCacheRefresh = LocalDateTime.MIN;
 
     @Transactional
     public ClassificationResult classify(ClassificationRequest request) {
-        log.info("Classifying traffic for IP: {}, URL: {}", request.getIpAddress(), request.getUrl());
-
         // 1. Get classification from ML model
         ClassificationResult result = classificationService.classify(request);
 
-        // 2. Override with local policy (Blocked Sites)
+        // 2. Override with local policy (Blocked Sites) - Using Cache
         String domain = extractDomain(request.getUrl());
-        blockedSiteRepository.findByUrl(domain).ifPresent(site -> {
-            if (site.isActive()) {
-                result.setIsAllowed(false);
-                result.setDecision("BLOCK");
-                result.setReason("Site is blocked by policy: " + site.getReason());
-            }
-        });
+        if (isDomainBlocked(domain)) {
+            result.setIsAllowed(false);
+            result.setDecision("BLOCK");
+            result.setReason("Site is blocked by policy");
+        }
 
-        // 3. Identify User and Device
+        // 3. Identify User and Device (Fast lookups)
         String username = portalService.getUsernameForIp(request.getIpAddress());
-        if (username == null)
-            username = "guest";
+        if (username == null) username = "guest";
 
-        final String userKey = username;
-        User user = userRepository.findByUsernameOrEmail(userKey, userKey)
-                .orElseGet(() -> userRepository.findAll().stream().findFirst().orElse(null));
-
-        // Attempt to find device by MAC address for more accurate tracking
         String macAddress = portalService.getMacForIp(request.getIpAddress());
-        Device device = null;
-
-        if (macAddress != null) {
-            device = deviceRepository.findByMacAddress(macAddress).orElse(null);
-        }
-
-        if (device == null) {
-            // Fallback to IP address if MAC lookup fails or no device found by MAC
-            device = deviceRepository.findByIpAddress(request.getIpAddress())
-                    .stream().findFirst()
-                    .orElseGet(() -> deviceRepository.findAll().stream().findFirst().orElse(null));
-        }
-
-        // Note: Even if user/device is null, we STILL persist the log (Anonymous/Guest)
-        // This ensures 100% coverage as requested by the user.
-
-        // 4. Map Category
+        
+        // 4. Map Category - Using Cache
         Category category = null;
         if (result.getCategory() != null) {
-            category = categoryRepository.findByName(result.getCategory().toUpperCase()).orElse(null);
+            category = getCategoryCached(result.getCategory().toUpperCase());
         }
 
-        // 5. Persist Log
-        TrafficLog logEntry = TrafficLog.builder()
-                .user(user)
-                .device(device)
-                .url(request.getUrl())
-                .domain(result.getDomain())
-                .method(request.getMethod())
-                .ipAddress(request.getIpAddress())
-                .userAgent(request.getUserAgent())
-                .referer(request.getReferer())
-                .category(category)
-                .classificationConfidence(java.math.BigDecimal.valueOf(result.getConfidence()))
-                .isBlocked(!result.getIsAllowed())
-                .blockReason(result.getReason())
-                .requestTimestamp(LocalDateTime.now())
-                .requestSize(0L)
-                .responseSize(0L)
-                .build();
+        // 5. Build and Persist Log ASYNCHRONOUSLY
+        // We capture IDs instead of entities to avoid LazyInitialization / Session issues in Async
+        persistLogAsync(request, result, domain, username, macAddress, category != null ? category.getId() : null);
 
-        trafficLogRepository.save(logEntry);
         return result;
+    }
+
+    private boolean isDomainBlocked(String domain) {
+        refreshCacheIfNeeded();
+        return blockedDomainCache.getOrDefault(domain, false);
+    }
+
+    private Category getCategoryCached(String name) {
+        refreshCacheIfNeeded();
+        return categoryCache.get(name);
+    }
+
+    private synchronized void refreshCacheIfNeeded() {
+        if (lastCacheRefresh.isBefore(LocalDateTime.now().minusMinutes(5))) {
+            log.debug("Refreshing TrafficLogService caches...");
+            blockedSiteRepository.findByActive(true).forEach(site -> 
+                blockedDomainCache.put(site.getUrl().toLowerCase(), true));
+            categoryRepository.findAll().forEach(cat -> 
+                categoryCache.put(cat.getName().toUpperCase(), cat));
+            lastCacheRefresh = LocalDateTime.now();
+        }
+    }
+
+    @org.springframework.scheduling.annotation.Async
+    public void persistLogAsync(ClassificationRequest request, ClassificationResult result, 
+                               String domain, String username, String macAddress, Long categoryId) {
+        try {
+            User user = userRepository.findByUsernameOrEmail(username, username)
+                    .orElseGet(() -> userRepository.findAll().stream().findFirst().orElse(null));
+
+            Device device = null;
+            if (macAddress != null) {
+                device = deviceRepository.findByMacAddress(macAddress).orElse(null);
+            }
+            if (device == null) {
+                device = deviceRepository.findByIpAddress(request.getIpAddress())
+                        .stream().findFirst().orElse(null);
+            }
+
+            Category category = categoryId != null ? categoryRepository.findById(categoryId).orElse(null) : null;
+
+            TrafficLog logEntry = TrafficLog.builder()
+                    .user(user)
+                    .device(device)
+                    .url(request.getUrl())
+                    .domain(domain)
+                    .method(request.getMethod())
+                    .ipAddress(request.getIpAddress())
+                    .userAgent(request.getUserAgent())
+                    .referer(request.getReferer())
+                    .category(category)
+                    .classificationConfidence(java.math.BigDecimal.valueOf(result.getConfidence()))
+                    .isBlocked(!result.getIsAllowed())
+                    .blockReason(result.getReason())
+                    .requestTimestamp(LocalDateTime.now())
+                    .requestSize(0L)
+                    .responseSize(0L)
+                    .build();
+
+            trafficLogRepository.save(logEntry);
+        } catch (Exception e) {
+            log.error("Failed to persist traffic log asynchronously", e);
+        }
     }
 
     @Transactional(readOnly = true)
@@ -134,6 +167,12 @@ public class TrafficLogService {
                     .build();
             blockedSiteRepository.save(site);
         }
+    }
+
+    @Transactional(readOnly = true)
+    public Page<TrafficLogResponse> getAllTrafficLogs(Pageable pageable) {
+        return trafficLogRepository.findAll(pageable)
+                .map(this::convertToResponse);
     }
 
     @Transactional(readOnly = true)
@@ -237,7 +276,7 @@ public class TrafficLogService {
                 .responseSize(log.getResponseSize())
                 .totalSize(log.getTotalSize())
                 .category(log.getCategory() != null ? log.getCategory().getName() : null)
-                .confidence(log.getClassificationConfidence())
+                .confidence(log.getClassificationConfidence() != null ? log.getClassificationConfidence().doubleValue() : null)
                 .isBlocked(log.getIsBlocked())
                 .blockReason(log.getBlockReason())
                 .responseTimeMs(log.getResponseTimeMs())

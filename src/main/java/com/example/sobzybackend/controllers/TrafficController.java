@@ -6,8 +6,9 @@ import com.example.sobzybackend.dtos.MessageResponse;
 import com.example.sobzybackend.dtos.TrafficLogResponse;
 import com.example.sobzybackend.dtos.TrafficStatisticsResponse;
 import com.example.sobzybackend.service.TrafficLogService;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import com.example.sobzybackend.service.TrafficLogService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -17,14 +18,17 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-@Slf4j
 @RestController
 @RequestMapping("/api/v1/traffic")
-@RequiredArgsConstructor
 @CrossOrigin(origins = "*", maxAge = 3600)
 public class TrafficController {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(TrafficController.class);
 
     private final TrafficLogService trafficLogService;
+
+    public TrafficController(TrafficLogService trafficLogService) {
+        this.trafficLogService = trafficLogService;
+    }
 
     @GetMapping("/logs")
     public ResponseEntity<Page<TrafficLogResponse>> getAllTrafficLogs(

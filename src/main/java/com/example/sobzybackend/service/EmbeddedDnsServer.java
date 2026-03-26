@@ -1,7 +1,5 @@
 package com.example.sobzybackend.service;
 
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.xbill.DNS.*;
 import org.xbill.DNS.Record;
@@ -13,14 +11,19 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-@Slf4j
-@Service
-@RequiredArgsConstructor
+@org.springframework.stereotype.Service
 public class EmbeddedDnsServer {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(EmbeddedDnsServer.class);
 
     private final PortalService portalService;
+    private final ClassificationService classificationService;
     private DatagramSocket udpSocket;
     private boolean isRunning = false;
+
+    public EmbeddedDnsServer(PortalService portalService, ClassificationService classificationService) {
+        this.portalService = portalService;
+        this.classificationService = classificationService;
+    }
 
     private static final List<String> WPAD_DOMAINS = Arrays.asList("wpad.", "wpad.local.", "wpad.home.");
 
@@ -74,11 +77,21 @@ public class EmbeddedDnsServer {
                     boolean isAuth = portalService.isIpAuthenticated(clientIp);
 
                     // 3. Hijack Logic
+                    // IMPORTANT: We hijack ALL domains for unauthenticated users — including whitelisted ones.
+                    // Why: Android probes `connectivitycheck.gstatic.com/generate_204` (a whitelisted domain).
+                    // If we bypass DNS hijacking for gstatic.com, the real 204 comes back from Google,
+                    // Android concludes "internet works fine", and NEVER shows the captive portal notification.
+                    // The whitelist is applied at the PROXY level (after redirect) for HTTPS tunneling,
+                    // not here at DNS level.
                     if (!isAuth && !qname.contains("localhost") && !qname.contains(hostIp)) {
+                        log.info("DNS HIJACK: {} -> {} (Target: {})", clientIp, hostIp, qname);
                         addARecord(response, question.getName(), hostIp);
                         sendResponse(response, udpSocket, receivePacket);
                     } else {
-                        // Forward to real DNS (8.8.8.8)
+                        // Forward to real DNS (8.8.8.8) for authenticated users
+                        if (!isAuth) {
+                            log.debug("DNS SKIP (local): {} -> {} (Target: {})", clientIp, qname, hostIp);
+                        }
                         forwardToUpstream(receivePacket.getData(), udpSocket, receivePacket.getAddress(),
                                 receivePacket.getPort());
                     }

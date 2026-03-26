@@ -6,9 +6,9 @@ import java.net.URL;
 import java.util.regex.Pattern;
 import java.util.stream.IntStream;
 
-@Slf4j
 @Service
 public class FeatureExtractionService {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(FeatureExtractionService.class);
 
     private static final Pattern IP_PATTERN = Pattern.compile("^\\d{1,3}(\\.\\d{1,3}){3}$");
     private static final String[] SUSPICIOUS_KEYWORDS = { "login", "verify", "account", "secure", "bank", "update",

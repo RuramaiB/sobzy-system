@@ -7,7 +7,7 @@ spring:
 
   mvc:
     async:
-      request-timeout: 60000
+      request-timeout: 120000
 
   datasource:
     url: jdbc:mysql://localhost:3306/sobzy-db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
@@ -15,7 +15,7 @@ spring:
     password:
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
-      maximum-pool-size: 10
+      maximum-pool-size: 50
       minimum-idle: 5
       connection-timeout: 30000
       idle-timeout: 600000

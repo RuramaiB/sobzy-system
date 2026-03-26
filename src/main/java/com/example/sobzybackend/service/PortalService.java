@@ -9,9 +9,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-@Slf4j
-@Service
+@org.springframework.stereotype.Service
 public class PortalService {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(PortalService.class);
 
     // Store authenticated IPs mapped to Usernames
     private final Map<String, String> authenticatedIps = new ConcurrentHashMap<>();
@@ -41,9 +41,15 @@ public class PortalService {
     public String getMacForIp(String ipAddress) {
         String mac = ipToMacMap.get(ipAddress);
         if (mac == null) {
-            mac = getMacFromArp(ipAddress);
-            if (mac != null)
-                ipToMacMap.put(ipAddress, mac);
+            // Background discovery to avoid blocking the proxy pipeline
+            java.util.concurrent.CompletableFuture.runAsync(() -> {
+                String discoveredMac = discoverMacAddress(ipAddress);
+                if (discoveredMac != null) {
+                    ipToMacMap.put(ipAddress, discoveredMac);
+                    log.info("Async discovery: Linked IP {} to MAC {}", ipAddress, discoveredMac);
+                }
+            });
+            return null; // Return null for now, next request will have it if discovered
         }
         return mac;
     }
@@ -54,12 +60,17 @@ public class PortalService {
         ipToMacMap.remove(ipAddress);
     }
 
+    private String discoverMacAddress(String ipAddress) {
+        return getMacFromArp(ipAddress);
+    }
+
     public Map<String, String> getAuthenticatedIps() {
         return authenticatedIps;
     }
 
     /**
      * Helper to get MAC address from ARP table on Windows
+     * Uses PowerShell for better reliability than 'arp -a'
      */
     private String getMacFromArp(String ipAddress) {
         try {
@@ -70,11 +81,22 @@ public class PortalService {
                 // Ignore ping failures
             }
 
-            ProcessBuilder pb = new ProcessBuilder("arp", "-a", ipAddress);
+            // Use Get-NetNeighbor for robust MAC discovery
+            ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command",
+                    "Get-NetNeighbor -IPAddress " + ipAddress + " | Select-Object -ExpandProperty LinkLayerAddress");
             Process process = pb.start();
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String mac = reader.readLine();
+            
+            if (mac != null && !mac.trim().isEmpty()) {
+                return mac.trim().replace("-", ":").toUpperCase();
+            }
+            
+            // Fallback to traditional arp -a if PowerShell fails or returns empty
+            pb = new ProcessBuilder("arp", "-a", ipAddress);
+            process = pb.start();
+            reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
             String line;
-            // Pattern for MAC address on Windows (e.g., 00-11-22-33-44-55)
             Pattern macPattern = Pattern.compile("([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})");
 
             while ((line = reader.readLine()) != null) {

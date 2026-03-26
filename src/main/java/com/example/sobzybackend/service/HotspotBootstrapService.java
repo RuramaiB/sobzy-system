@@ -7,7 +7,6 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
-import java.io.File;
 import java.io.InputStreamReader;
 
 @Slf4j
@@ -21,49 +20,20 @@ public class HotspotBootstrapService implements ApplicationRunner {
     public void run(ApplicationArguments args) throws Exception {
         log.info("=== Hotspot Environment Validation ===");
 
-        // 1. Check Python
-        checkPython();
-
-        // 2. Check Scripts
+        // 1. Check Scripts (Modified for Pure Java)
         checkScripts();
 
-        // 3. Dry-run PowerShell
+        // 2. Dry-run PowerShell
         checkPowerShell();
 
         log.info("Hotspot Environment Validation Complete.");
     }
 
-    private void checkPython() {
-        try {
-            Process p = Runtime.getRuntime().exec("python --version");
-            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
-            String line = reader.readLine();
-            if (line == null) {
-                // Try python3
-                p = Runtime.getRuntime().exec("python3 --version");
-                reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
-                line = reader.readLine();
-            }
-            if (line != null) {
-                log.info("Python version: {}", line);
-            } else {
-                log.warn("Python not found in PATH. Please ensure Python is installed.");
-            }
-        } catch (Exception e) {
-            log.warn("Failed to check Python version: {}", e.getMessage());
-        }
-    }
+
 
     private void checkScripts() {
-        String[] requiredScripts = { "src/main/python/mitm_addon.py" };
-        for (String script : requiredScripts) {
-            File file = new File(script);
-            if (file.exists()) {
-                log.info("Found component: {}", script);
-            } else {
-                log.error("CRITICAL ERROR: Component NOT found: {}", script);
-            }
-        }
+        // No Python scripts needed for Pure Java implementation
+        log.info("Pure Java implementation: skipping legacy component checks.");
     }
 
     private void checkPowerShell() {

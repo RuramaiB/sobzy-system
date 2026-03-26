@@ -8,24 +8,29 @@ import com.example.sobzybackend.models.Device;
 import com.example.sobzybackend.repository.DeviceRepository;
 import com.example.sobzybackend.repository.UserRepository;
 import com.example.sobzybackend.users.User;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import java.time.LocalDateTime;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class DeviceService {
+
+    private static final Logger log = LoggerFactory.getLogger(DeviceService.class);
 
     private final DeviceRepository deviceRepository;
     private final UserRepository userRepository;
+
+    public DeviceService(DeviceRepository deviceRepository, UserRepository userRepository) {
+        this.deviceRepository = deviceRepository;
+        this.userRepository = userRepository;
+    }
 
     @Transactional
     public DeviceResponse registerDevice(DeviceRegistrationRequest request) {

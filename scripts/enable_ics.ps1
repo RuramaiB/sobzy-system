@@ -100,6 +100,19 @@ try {
             Write-Log "ERROR: Failed to enable ICS after $MaxRetries attempts."
             exit 1
         }
+
+        # 4. Detect the assigned IP
+        Write-Log "Detecting assigned IP on $TargetAdapterName..."
+        Start-Sleep -Seconds 2 # Wait for IP stabilization
+        $AssignedIP = (Get-NetIPAddress -InterfaceAlias $TargetAdapterName -AddressFamily IPv4).IPAddress
+        if ($AssignedIP) {
+            Write-Log "SUCCESS: Assigned IP detected: $AssignedIP"
+            Write-Host "[HOST_IP] $AssignedIP"
+        } else {
+            Write-Log "WARNING: Could not detect IP on $TargetAdapterName. Defaulting to 192.168.137.1"
+            Write-Host "[HOST_IP] 192.168.137.1"
+        }
+
     } else {
         Write-Log "ERROR: Failed to map connection handles in NetSharingManager."
         exit 1

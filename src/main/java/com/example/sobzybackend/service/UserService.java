@@ -6,8 +6,8 @@ import com.example.sobzybackend.enums.Role;
 import com.example.sobzybackend.repository.UserRepository;
 import com.example.sobzybackend.exceptions.ResourceNotFoundException;
 import com.example.sobzybackend.users.User;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -21,12 +21,16 @@ import java.util.stream.Collectors;
  * Service for user management operations
  * Handles CRUD operations and user queries
  */
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class UserService {
 
+    private static final Logger log = LoggerFactory.getLogger(UserService.class);
+
     private final UserRepository userRepository;
+
+    public UserService(UserRepository userRepository) {
+        this.userRepository = userRepository;
+    }
 
     /**
      * Get all users with pagination

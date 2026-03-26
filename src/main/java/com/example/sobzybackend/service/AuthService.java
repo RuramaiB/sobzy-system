@@ -7,9 +7,9 @@ import com.example.sobzybackend.enums.*;
 import com.example.sobzybackend.exceptions.*;
 import com.example.sobzybackend.repository.*;
 import com.example.sobzybackend.users.User;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.client5.http.auth.InvalidCredentialsException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -24,15 +24,22 @@ import javax.security.auth.login.AccountLockedException;
  * Service class for authentication operations with JWT
  * Handles user registration, login, logout, and profile management
  */
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class AuthService {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
+
+    public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService, AuthenticationManager authenticationManager) {
+        this.userRepository = userRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.jwtService = jwtService;
+        this.authenticationManager = authenticationManager;
+    }
 
     private static final int MAX_LOGIN_ATTEMPTS = 5;
 

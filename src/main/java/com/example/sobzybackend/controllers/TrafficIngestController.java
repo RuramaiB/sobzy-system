@@ -1,29 +1,33 @@
 package com.example.sobzybackend.controllers;
 
 import com.example.sobzybackend.dtos.ClassificationRequest;
-import com.example.sobzybackend.dtos.ClassificationResult;
 import com.example.sobzybackend.dtos.DecisionResponse;
 import com.example.sobzybackend.dtos.TrafficIngestRequest;
 import com.example.sobzybackend.service.PolicyEnforcementService;
 import com.example.sobzybackend.service.TrafficAnalysisService;
 import com.example.sobzybackend.service.TrafficLogService;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-@Slf4j
 @RestController
 @RequestMapping("/api/traffic")
-@RequiredArgsConstructor
 @CrossOrigin(origins = "*")
 public class TrafficIngestController {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(TrafficIngestController.class);
 
     private final TrafficAnalysisService trafficAnalysisService;
     private final TrafficLogService trafficLogService;
     private final PolicyEnforcementService policyEnforcementService;
+
+    public TrafficIngestController(TrafficAnalysisService trafficAnalysisService,
+                                  TrafficLogService trafficLogService,
+                                  PolicyEnforcementService policyEnforcementService) {
+        this.trafficAnalysisService = trafficAnalysisService;
+        this.trafficLogService = trafficLogService;
+        this.policyEnforcementService = policyEnforcementService;
+    }
 
     @PostMapping("/ingest")
     public ResponseEntity<DecisionResponse> ingestTraffic(@RequestBody TrafficIngestRequest request) {

@@ -19,14 +19,21 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class HotspotService {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(HotspotService.class);
 
     private final DeviceRepository deviceRepository;
     private final UserRepository userRepository;
     private final DeviceService deviceService;
+
+    public HotspotService(DeviceRepository deviceRepository,
+                         UserRepository userRepository,
+                         DeviceService deviceService) {
+        this.deviceRepository = deviceRepository;
+        this.userRepository = userRepository;
+        this.deviceService = deviceService;
+    }
 
     @org.springframework.beans.factory.annotation.Autowired
     @org.springframework.context.annotation.Lazy

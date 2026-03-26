@@ -2,19 +2,20 @@ package com.example.sobzybackend.service;
 
 import com.example.sobzybackend.dtos.ClassificationRequest;
 import com.example.sobzybackend.dtos.DecisionResponse;
-import com.example.sobzybackend.repository.BlockedSiteRepository;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
 import java.util.List;
 
-@Slf4j
-@Service
-@RequiredArgsConstructor
+@org.springframework.stereotype.Service
 public class PolicyEnforcementService {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(PolicyEnforcementService.class);
 
     private final ClassificationService classificationService;
     private final VpnDetectionService vpnDetectionService;
+
+    public PolicyEnforcementService(ClassificationService classificationService,
+                                   VpnDetectionService vpnDetectionService) {
+        this.classificationService = classificationService;
+        this.vpnDetectionService = vpnDetectionService;
+    }
 
     /**
      * Makes a final decision (ALLOW/BLOCK) based on policy and ML results.
@@ -49,10 +50,12 @@ public class PolicyEnforcementService {
         String category = result.category();
         boolean isEducational = "RESEARCH".equals(category) || "EDUCATION".equals(category);
         boolean isMusic = "MUSIC".equals(category);
+        boolean isToolOrUtility = "BENIGN".equals(category) || "OTHER".equals(category); // Relaxing OTHER to allow more sites
+        
         boolean isExplicitOrRestricted = "ADULT_CONTENT".equals(category) || 
-                                        "GAMING".equals(category) || 
                                         "GAMBLING".equals(category) ||
-                                        "SOCIAL_MEDIA".equals(category);
+                                        "GAMING".equals(category);
+                                        // Removing SOCIAL_MEDIA from strict block list to allow LinkedIn/Research sites
 
         String decision = "ALLOW";
         String reason = "AI Analysis: Low risk (" + category + ")";
@@ -60,13 +63,13 @@ public class PolicyEnforcementService {
         if (isExplicitOrRestricted) {
             decision = "BLOCK";
             reason = "Restricted category: " + category;
-        } else if (isEducational || isMusic || "BENIGN".equals(category)) {
+        } else if (isEducational || isMusic || isToolOrUtility || "SEARCH".equals(category) || "SOCIAL_MEDIA".equals(category)) {
             decision = "ALLOW";
             reason = "Allowed category: " + category;
         } else {
-            // Default to block for everything else (Educational only policy)
-            decision = "BLOCK";
-            reason = "AI Analysis: Not in allowed educational/music categories (" + category + ")";
+            // Default to allow for anything not explicitly malicious (Restricted policy can be toggled by admin)
+            decision = "ALLOW";
+            reason = "AI Analysis: Non-restricted category (" + category + ")";
         }
 
         return DecisionResponse.builder()
@@ -80,6 +83,7 @@ public class PolicyEnforcementService {
 
     private String extractDomain(String url) {
         try {
+            if (url == null) return "unknown";
             if (url.contains("://")) {
                 return new java.net.URL(url).getHost().toLowerCase();
             }

@@ -3,8 +3,6 @@ package com.example.sobzybackend.service;
 import com.example.sobzybackend.dtos.HotspotInfoResponse;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -14,15 +12,22 @@ import java.util.ArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-@Slf4j
-@Service
-@RequiredArgsConstructor
+@org.springframework.stereotype.Service
 public class NetworkAutomationService {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(NetworkAutomationService.class);
 
     private final HotspotService hotspotService;
     private final DeviceService deviceService;
     private final EmbeddedProxyServer embeddedProxyServer;
     private final EmbeddedDnsServer embeddedDnsServer;
+
+    public NetworkAutomationService(HotspotService hotspotService, DeviceService deviceService, 
+                                   EmbeddedProxyServer embeddedProxyServer, EmbeddedDnsServer embeddedDnsServer) {
+        this.hotspotService = hotspotService;
+        this.deviceService = deviceService;
+        this.embeddedProxyServer = embeddedProxyServer;
+        this.embeddedDnsServer = embeddedDnsServer;
+    }
 
     @Value("${app.network.automation.enabled:true}")
     private boolean enabled;
@@ -35,7 +40,7 @@ public class NetworkAutomationService {
 
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
     private Process proxyProcess;
-    private String hostIp = "192.168.137.1";
+    private String hostIp = "192.168.137.1"; // Default fallback
 
     @PostConstruct
     public void init() {
@@ -117,13 +122,20 @@ public class NetworkAutomationService {
                     ssid, password);
             runPowerShell("Start-Hotspot", hotspotScript);
 
-            // 2. Enable ICS
-            log.info("Enabling ICS Sharing...");
+            // 2. Enable ICS & Detect IP
+            log.info("Enabling ICS Sharing and detecting Host IP...");
             String icsPath = System.getProperty("user.dir") + "\\scripts\\enable_ics.ps1";
-            runPowerShell("Enable-ICS", "& '" + icsPath + "'");
+            String detectedIp = runIcsAndGetIp(icsPath);
+            
+            if (detectedIp != null) {
+                this.hostIp = detectedIp;
+                log.info("DYNAMIC_IP_SUCCESS: Detected Hotspot IP: {}", this.hostIp);
+            } else {
+                log.warn("DYNAMIC_IP_FAILURE: Could not detect IP from script. Falling back to {}", this.hostIp);
+            }
 
-            // 3. Configure Port Forwarding
-            log.info("Configuring Port Redirection (80/443 -> 8080)...");
+            // 3. Configure Port Forwarding using the CORRECT IP
+            log.info("Configuring Port Redirection (80/443 -> 8080) for IP: {}...", this.hostIp);
             executeCommand("netsh interface portproxy reset");
             executeCommand(String.format(
                     "netsh interface portproxy add v4tov4 listenport=80 listenaddress=%s connectport=8080 connectaddress=%s",
@@ -132,14 +144,8 @@ public class NetworkAutomationService {
                     "netsh interface portproxy add v4tov4 listenport=443 listenaddress=%s connectport=8080 connectaddress=%s",
                     this.hostIp, this.hostIp));
 
-            // 4. Update Host IP dynamically if possible
-            String detectedIp = detectHostIp();
-            log.info("NETWORK_DEBUG: Host IP Detection. Current={}, Detected={}", this.hostIp, detectedIp);
-            this.hostIp = detectedIp;
-            log.info("Detected Hotspot IP: {}", this.hostIp);
-
-            // 5. Start DNS & Proxy
-            log.info("Launching IWACS Pure Java Engine (DNS + Proxy)...");
+            // 4. Start DNS & Proxy
+            log.info("Launching IWACS Pure Java Engine (DNS + Proxy) on {}...", this.hostIp);
             embeddedDnsServer.startDns(this.hostIp);
             embeddedProxyServer.startProxy(this.hostIp);
 
@@ -160,11 +166,44 @@ public class NetworkAutomationService {
         }
     }
 
+    private String runIcsAndGetIp(String scriptPath) {
+        String resultIp = null;
+        try {
+            ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                    "-Command", "& '" + scriptPath + "'");
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            
+            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                log.info("[ICS-SCRIPT] {}", line);
+                if (line.contains("[HOST_IP]")) {
+                    String[] parts = line.split("\\[HOST_IP\\]");
+                    if (parts.length > 1) {
+                        resultIp = parts[1].trim();
+                    }
+                }
+            }
+            p.waitFor();
+        } catch (Exception e) {
+            log.error("Failed to execute ICS script and get IP", e);
+        }
+
+        // Use our robust detection as a fallback if the script didn't output an IP
+        if (resultIp == null) {
+            log.info("Script did not output [HOST_IP]. Attempting fallback detection...");
+            resultIp = detectHostIp();
+        }
+
+        return resultIp;
+    }
+
     private String detectHostIp() {
         try {
-            // Prioritize the standard Windows ICS gateway IP 192.168.137.1
+            // Simplified fallback using Get-NetIPAddress to find the Hotspot interface
             ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command",
-                "$addr = (Get-NetIPAddress | Where-Object { $_.IPAddress -eq '192.168.137.1' }).IPAddress; if ($addr) { $addr } else { (Get-NetIPAddress | Where-Object { $_.AddressFamily -eq 'IPv4' -and ($_.IPAddress -like '172.24.*' -or $_.IPAddress -like '192.168.137.*') }).IPAddress | Select-Object -First 1 }");
+                "(Get-NetIPAddress | Where-Object { $_.AddressFamily -eq 'IPv4' -and ($_.InterfaceDescription -like '*Wi-Fi Direct Virtual Adapter*' -or $_.IPAddress -eq '192.168.137.1') }).IPAddress | Select-Object -First 1");
             Process p = pb.start();
             BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
             String ip = reader.readLine();
@@ -172,7 +211,7 @@ public class NetworkAutomationService {
                 return ip.trim();
             }
         } catch (Exception e) {
-            log.warn("Failed to detect dynamic host IP, falling back to default: {}", e.getMessage());
+            log.warn("Fallback IP detection failed: {}", e.getMessage());
         }
         return "192.168.137.1";
     }

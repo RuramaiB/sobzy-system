@@ -3,8 +3,8 @@ package com.example.sobzybackend.controllers;
 import com.example.sobzybackend.dtos.*;
 import com.example.sobzybackend.service.AuthService;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hc.client5.http.auth.InvalidCredentialsException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -16,14 +16,18 @@ import javax.security.auth.login.AccountLockedException;
  * REST Controller for authentication operations with JWT
  * Handles user registration, login, logout, token refresh, and profile management
  */
-@Slf4j
 @RestController
 @RequestMapping("/api/v1/auth")
-@RequiredArgsConstructor
 @CrossOrigin(origins = "*", maxAge = 3600)
 public class AuthController {
 
+    private static final Logger log = LoggerFactory.getLogger(AuthController.class);
+
     private final AuthService authService;
+
+    public AuthController(AuthService authService) {
+        this.authService = authService;
+    }
 
     /**
      * Register a new user

@@ -10,11 +10,14 @@ import java.util.concurrent.CompletableFuture;
 
 @RestController
 @RequestMapping("/api/v1/hotspot")
-@RequiredArgsConstructor
 @CrossOrigin(origins = "*")
 public class HotspotController {
 
     private final HotspotService hotspotService;
+
+    public HotspotController(HotspotService hotspotService) {
+        this.hotspotService = hotspotService;
+    }
 
     @GetMapping("/details")
     public CompletableFuture<ResponseEntity<HotspotInfoResponse>> getDetails() {
