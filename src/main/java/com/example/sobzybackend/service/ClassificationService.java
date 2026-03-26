@@ -19,6 +19,19 @@ public class ClassificationService {
     private final FeatureExtractionService featureExtractionService;
     private final String modelPath = "models/rf_model.ser";
 
+    private static final java.util.Set<String> WHITELISTED_DOMAINS = java.util.Set.of(
+            "google.com", "bing.com", "duckduckgo.com", "yahoo.com",
+            "wikipedia.org", "britannica.com", "coursera.org", "udemy.com",
+            "stackoverflow.com", "github.com", "gitlab.com", "bitbucket.org",
+            "microsoft.com", "apple.com", "adobe.com", "npmmirror.com", "npmjs.com",
+            "maven.org", "apache.org", "spring.io", "oracle.com", "java.com",
+            "google.co.zw", "econet.co.zw", "netone.co.zw", "telecel.co.zw",
+            "hit.ac.zw", "uz.ac.zw", "msu.ac.zw", "nust.ac.zw", "cut.ac.zw",
+            "gstatic.com", "googleapis.com", "googleusercontent.com", "ggpht.com",
+            "youtube.com", "ytimg.com", "googlevideo.com", "android.com", 
+            "play.google.com"
+    );
+
     public ClassificationService(FeatureExtractionService featureExtractionService) {
         this.featureExtractionService = featureExtractionService;
     }
@@ -36,27 +49,38 @@ public class ClassificationService {
 
     public PredictionResult predict(String url) {
         String lowerUrl = url.toLowerCase();
+        String domain = extractDomain(lowerUrl);
 
-        // 1. Strong Keyword / Heuristic Logic (Overriding Dummy Model for specific
-        // policies)
+        // 1. Whitelist Check (Critical for Education/Productivity)
+        if (WHITELISTED_DOMAINS.stream().anyMatch(d -> domain.equals(d) || domain.endsWith("." + d))) {
+            return new PredictionResult("BENIGN", 1.0);
+        }
+
+        // 2. Strong Keyword / Heuristic Logic
         if (lowerUrl.contains("bet") || lowerUrl.contains("casino") || lowerUrl.contains("poker")
-                || lowerUrl.contains("gamble") || lowerUrl.contains("slot")) {
+                || lowerUrl.contains("gamble") || lowerUrl.contains("slot") || lowerUrl.contains("jackpot")
+                || lowerUrl.contains("bookmaker") || lowerUrl.contains("sportybet") || lowerUrl.contains("bet9ja")
+                || lowerUrl.contains("1xbet")) {
             return new PredictionResult("GAMBLING", 0.98);
         }
         if (lowerUrl.contains("porn") || lowerUrl.contains("xxx") || lowerUrl.contains("sex")
-                || lowerUrl.contains("nsfw") || lowerUrl.contains("onlyfans") || lowerUrl.contains("adult")) {
+                || lowerUrl.contains("nsfw") || lowerUrl.contains("onlyfans") || lowerUrl.contains("adult")
+                || lowerUrl.contains("redtube") || lowerUrl.contains("pornhub") || lowerUrl.contains("xvideos")) {
             return new PredictionResult("ADULT_CONTENT", 0.99);
         }
         if (lowerUrl.contains("game") || lowerUrl.contains("playstation") || lowerUrl.contains("xbox")
-                || lowerUrl.contains("steam") || lowerUrl.contains("roblox") || lowerUrl.contains("fortnite")) {
+                || lowerUrl.contains("steam") || lowerUrl.contains("roblox") || lowerUrl.contains("fortnite")
+                || lowerUrl.contains("twitch.tv") || lowerUrl.contains("discord.com")) {
             return new PredictionResult("GAMING", 0.92);
         }
         if (lowerUrl.contains("edu") || lowerUrl.contains("school") || lowerUrl.contains("academy")
-                || lowerUrl.contains("learn") || lowerUrl.contains("study") || lowerUrl.contains("research")) {
+                || lowerUrl.contains("learn") || lowerUrl.contains("study") || lowerUrl.contains("research")
+                || lowerUrl.contains("scholar") || lowerUrl.contains("ac.zw") || lowerUrl.contains("university")
+                || lowerUrl.contains("library") || lowerUrl.contains("archive.org")) {
             return new PredictionResult("EDUCATION", 0.95);
         }
 
-        // 2. ML Model fallback
+        // 3. ML Model fallback
         double[] features = featureExtractionService.extractUrlFeatures(url);
         if (model == null) {
             return new PredictionResult("BENIGN", 0.5);
@@ -74,10 +98,11 @@ public class ClassificationService {
     public ClassificationResult classify(ClassificationRequest request) {
         PredictionResult prediction = predict(request.getUrl());
 
-        // Refined decision logic for educational/music leniency
+        // Refined decision logic: Only block strictly explicit or gambling content by default
         boolean isMalicious = "ADULT_CONTENT".equals(prediction.category()) ||
-                "GAMBLING".equals(prediction.category()) ||
-                "GAMING".equals(prediction.category());
+                "GAMBLING".equals(prediction.category());
+
+        String reason = isMalicious ? "Site categorized as " + prediction.category() : "Allowed";
 
         return ClassificationResult.builder()
                 .url(request.getUrl())
@@ -86,6 +111,7 @@ public class ClassificationService {
                 .confidence(prediction.confidence())
                 .isAllowed(!isMalicious)
                 .decision(isMalicious ? "BLOCK" : "ALLOW")
+                .reason(reason)
                 .processingTimeMs(0L)
                 .build();
     }
@@ -99,6 +125,12 @@ public class ClassificationService {
         } catch (Exception e) {
             return "unknown";
         }
+    }
+
+    public boolean isWhitelisted(String host) {
+        if (host == null) return false;
+        String lowerHost = host.toLowerCase();
+        return WHITELISTED_DOMAINS.stream().anyMatch(lowerHost::contains);
     }
 
     private void loadModel() {

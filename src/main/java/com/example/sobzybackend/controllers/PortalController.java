@@ -33,10 +33,24 @@ public class PortalController {
             HttpServletRequest request) {
         String clientIp = request.getHeader("X-Forwarded-For");
         if (clientIp == null || clientIp.isEmpty()) {
+            clientIp = request.getHeader("X-Real-IP");
+        }
+        if (clientIp == null || clientIp.isEmpty()) {
             clientIp = request.getRemoteAddr();
         }
+        
+        // Debug Log all headers to find real client IP
+        java.util.Enumeration<String> headerNames = request.getHeaderNames();
+        StringBuilder sb = new StringBuilder();
+        while (headerNames.hasMoreElements()) {
+            String h = headerNames.nextElement();
+            sb.append(h).append("=").append(request.getHeader(h)).append(", ");
+        }
+
         String email = payload.getOrDefault("email", payload.getOrDefault("username", "guest@hit.ac.zw"));
-        log.info("RECEIVED PORTAL LOGIN REQUEST: Email={}, IP={}, Payload={}", email, clientIp, payload);
+        
+        log.info("AUTH_DEBUG: Portal Login. ResolvedIp={}, RemoteAddr={}, Headers=[{}], Email={}", 
+            clientIp, request.getRemoteAddr(), sb.toString(), email);
 
         // 1. Ensure User exists in DB for this email
         User user = userRepository.findByUsername(email).orElse(null);
