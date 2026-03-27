@@ -17,6 +17,7 @@ public class EmbeddedDnsServer {
 
     private final PortalService portalService;
     private final ClassificationService classificationService;
+    private String targetHostIp = "127.0.0.1";
     private DatagramSocket udpSocket;
     private boolean isRunning = false;
 
@@ -25,14 +26,23 @@ public class EmbeddedDnsServer {
         this.classificationService = classificationService;
     }
 
-    private static final List<String> WPAD_DOMAINS = Arrays.asList("wpad.", "wpad.local.", "wpad.home.");
+    public void setHostIp(String hostIp) {
+        this.targetHostIp = hostIp;
+        log.info("DNS Hijacker target IP updated to: {}", hostIp);
+    }
 
     public void startDns(String hostIp) {
-        if (isRunning)
+        if (hostIp != null && !hostIp.equals("0.0.0.0")) {
+            this.targetHostIp = hostIp;
+        }
+        
+        if (isRunning) {
+            log.info("DNS Server is already running. Target IP: {}", targetHostIp);
             return;
+        }
         isRunning = true;
 
-        CompletableFuture.runAsync(() -> runDnsLoop(hostIp));
+        CompletableFuture.runAsync(() -> runDnsLoop());
     }
 
     public void stopDns() {
@@ -43,26 +53,26 @@ public class EmbeddedDnsServer {
         log.info("Embedded DNS Server stopped.");
     }
 
-    private void runDnsLoop(String hostIp) {
-        log.info("Starting DNS Hijacker on ALL_INTERFACES:53 (Hijacking to {})", hostIp);
+    private void runDnsLoop() {
+        log.info("PRE-EMPTIVE DNS: Attempting to secure Port 53 on all interfaces...");
         
-        int retries = 5;
+        int retries = 10; // Increased retries for front-running
         while (retries > 0 && isRunning) {
             try {
                 // Bind to 0.0.0.0:53 (all interfaces) to catch requests robustly
                 udpSocket = new DatagramSocket(53);
-                log.info("DNS Server bound successfully to 0.0.0.0:53");
+                log.info("SUCCESS: Port 53 secured. DNS Hijacker is now front-running.");
                 break; // success
             } catch (Exception e) {
                 retries--;
-                log.warn("DNS Bind failed on 0.0.0.0:53 ({} retries left). Error: {}", retries, e.getMessage());
+                log.warn("DNS Pre-bind failed ({} retries left). Conflict: {}", retries, e.getMessage());
+                
+                // If we failed, it might be ICS. SharedAccess registry fix should help,
+                // but we wait a bit for it to stop if we just triggered a restart.
                 if (retries > 0) {
-                    try { Thread.sleep(2000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                    try { Thread.sleep(3000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
                 } else {
-                    log.error("CRITICAL: DNS Server failed to bind after multiple attempts. Port 53 is being held by another process.");
-                    log.error("TROUBLESHOOTING: 1. Run 'netstat -ano -p udp | findstr :53' to find the PID.");
-                    log.error("TROUBLESHOOTING: 2. Check if Internet Connection Sharing (ICS) is properly configured (EnableDNS registry fix).");
-                    log.error("TROUBLESHOOTING: 3. Ensure no other DNS servers (Acrylic, Bind9, MaraDNS) are running.");
+                    log.error("CRITICAL: Port 53 is persistently locked.");
                     isRunning = false;
                     return;
                 }
@@ -89,8 +99,8 @@ public class EmbeddedDnsServer {
 
                     // 1. Check WPAD
                     if (WPAD_DOMAINS.contains(qname.toLowerCase())) {
-                        log.info("DNS WPAD RESOLVE: {} -> {}", clientIp, hostIp);
-                        addARecord(response, question.getName(), hostIp);
+                        log.info("DNS WPAD RESOLVE: {} -> {}", clientIp, targetHostIp);
+                        addARecord(response, question.getName(), targetHostIp);
                         sendResponse(response, udpSocket, receivePacket);
                         continue;
                     }
@@ -99,31 +109,22 @@ public class EmbeddedDnsServer {
                     boolean isAuth = portalService.isIpAuthenticated(clientIp);
 
                     // 3. Hijack Logic
-                    // IMPORTANT: We hijack ALL domains for unauthenticated users — including whitelisted ones.
-                    // Why: Android probes `connectivitycheck.gstatic.com/generate_204` (a whitelisted domain).
-                    // If we bypass DNS hijacking for gstatic.com, the real 204 comes back from Google,
-                    // Android concludes "internet works fine", and NEVER shows the captive portal notification.
-                    // The whitelist is applied at the PROXY level (after redirect) for HTTPS tunneling,
-                    // not here at DNS level.
-                    if (!isAuth && !qname.contains("localhost") && !qname.contains(hostIp)) {
-                        log.info("DNS HIJACK: {} -> {} (Target: {})", clientIp, hostIp, qname);
-                        addARecord(response, question.getName(), hostIp);
+                    if (!isAuth && !qname.contains("localhost") && !qname.contains(targetHostIp)) {
+                        log.info("DNS HIJACK: {} -> {} (Target: {})", clientIp, targetHostIp, qname);
+                        addARecord(response, question.getName(), targetHostIp);
                         sendResponse(response, udpSocket, receivePacket);
                     } else {
                         // Forward to real DNS (8.8.8.8) for authenticated users
-                        if (!isAuth) {
-                            log.debug("DNS SKIP (local): {} -> {} (Target: {})", clientIp, qname, hostIp);
-                        }
                         forwardToUpstream(receivePacket.getData(), udpSocket, receivePacket.getAddress(),
                                 receivePacket.getPort());
                     }
 
                 } catch (Exception e) {
-                    // Ignore malformed packets silently to avoid log spam
+                    // Ignore malformed packets silently
                 }
             }
         } catch (Exception e) {
-            log.error("DNS Server failed to bind or encountered error: {}", e.getMessage());
+            log.error("DNS Server loop error: {}", e.getMessage());
             isRunning = false;
         }
     }

@@ -102,6 +102,10 @@ public class NetworkAutomationService {
 
     private void runMasterSetup() {
         try {
+            // 0. FRONT-RUN DNS: Secure Port 53 immediately before Windows services start
+            log.info("FRONT-RUNNING: Securing DNS Port 53 before automation starts...");
+            embeddedDnsServer.startDns("0.0.0.0");
+
             // 1. Start Hotspot
             log.info("Configuring Windows Hotspot via PowerShell...");
             String hotspotScript = String.format(
@@ -122,16 +126,29 @@ public class NetworkAutomationService {
                     ssid, password);
             runPowerShell("Start-Hotspot", hotspotScript);
 
-            // 2. Enable ICS & Detect IP
+            // 2. Enable ICS & Detect IP (Robust)
             log.info("Enabling ICS Sharing and detecting Host IP...");
             String icsPath = System.getProperty("user.dir") + "\\scripts\\enable_ics.ps1";
-            String detectedIp = runIcsAndGetIp(icsPath);
             
-            if (detectedIp != null) {
+            String detectedIp = null;
+            int ipRetries = 15; // 15 retries * 2s = 30s for IP to stabilize
+            while (ipRetries > 0) {
+                detectedIp = runIcsAndGetIp(icsPath);
+                if (isValidLocalIp(detectedIp)) {
+                    break;
+                }
+                ipRetries--;
+                log.warn("Detected IP {} is invalid or APIPA. Retrying in 2 seconds... ({} attempts left)", detectedIp, ipRetries);
+                Thread.sleep(2000);
+            }
+            
+            if (isValidLocalIp(detectedIp)) {
                 this.hostIp = detectedIp;
-                log.info("DYNAMIC_IP_SUCCESS: Detected Hotspot IP: {}", this.hostIp);
+                log.info("DYNAMIC_IP_SUCCESS: Detected stable Hotspot IP: {}", this.hostIp);
+                // Update DNS server with the correct hijack target
+                embeddedDnsServer.setHostIp(this.hostIp);
             } else {
-                log.warn("DYNAMIC_IP_FAILURE: Could not detect IP from script. Falling back to {}", this.hostIp);
+                log.error("DYNAMIC_IP_CRITICAL_FAILURE: Could not detect valid IP. System will likely be unreachable.");
             }
 
             // 3. Configure Port Forwarding using the CORRECT IP
@@ -159,8 +176,8 @@ public class NetworkAutomationService {
             executeCommand("netsh advfirewall firewall add rule name=\"Sobzy-DNS-TCP\" dir=in action=allow protocol=TCP localport=53 profile=any");
 
             // 4. Start DNS & Proxy
-            log.info("Launching IWACS Pure Java Engine (DNS + Proxy) on {}...", this.hostIp);
-            embeddedDnsServer.startDns(this.hostIp);
+            log.info("Launching IWACS Pure Java Engine (Proxy) on {}...", this.hostIp);
+            // DNS is already running (pre-emptively)
             embeddedProxyServer.startProxy(this.hostIp);
 
             HotspotInfoResponse runningState = HotspotInfoResponse.builder()
@@ -211,6 +228,12 @@ public class NetworkAutomationService {
         }
 
         return resultIp;
+    }
+
+    private boolean isValidLocalIp(String ip) {
+        if (ip == null || ip.isEmpty()) return false;
+        // Avoid APIPA addresses (169.254.x.x) and loopback
+        return !ip.startsWith("169.254.") && !ip.equals("127.0.0.1") && !ip.equals("0.0.0.0");
     }
 
     private String detectHostIp() {

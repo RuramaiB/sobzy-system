@@ -135,14 +135,16 @@ try {
 
         # 4. Detect the assigned IP
         Write-Log "Detecting assigned IP on $TargetAdapterName..."
-        Start-Sleep -Seconds 2 # Wait for IP stabilization
-        $AssignedIP = (Get-NetIPAddress -InterfaceAlias $TargetAdapterName -AddressFamily IPv4).IPAddress
+        Start-Sleep -Seconds 3 # Wait for IP stabilization
+        # Filter out APIPA addresses (169.254.*) to ensure we get the real ICS IP
+        $AssignedIP = (Get-NetIPAddress -InterfaceAlias $TargetAdapterName -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike "169.254.*" }).IPAddress
+        
         if ($AssignedIP) {
             Write-Log "SUCCESS: Assigned IP detected: $AssignedIP"
             Write-Host "[HOST_IP] $AssignedIP"
         } else {
-            Write-Log "WARNING: Could not detect IP on $TargetAdapterName. Defaulting to 192.168.137.1"
-            Write-Host "[HOST_IP] 192.168.137.1"
+            Write-Log "WARNING: Could not detect valid IP on $TargetAdapterName. (Is the adapter still initializing?)"
+            # No [HOST_IP] output here so Java can retry correctly
         }
 
         # 5. Open Firewall for DNS
