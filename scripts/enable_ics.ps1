@@ -23,13 +23,30 @@ $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters"
 $regValue = "EnableDNS"
 
 try {
+    # 2.1 Force stop the service first to ensure a clean slate
+    Write-Log "Stopping SharedAccess (ICS) service..."
+    Stop-Service SharedAccess -Force -ErrorAction SilentlyContinue
+    
+    # 2.2 Identify and KILL any non-essential process holding Port 53
+    # This addresses cases where Acrylic, DNSMasq or other DNS software is running
+    Write-Log "Checking for other processes on UDP Port 53..."
+    $dnsEndpoints = Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue
+    foreach ($endpoint in $dnsEndpoints) {
+        $ownerPid = $endpoint.OwningProcess
+        $ownerProcess = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
+        if ($ownerProcess -and $ownerProcess.Name -ne "svchost") {
+            Write-Log "PORT_CONFLICT: Terminating process $($ownerProcess.Name) (PID: $ownerPid) holding Port 53..."
+            Stop-Process -Id $ownerPid -Force
+        }
+    }
+
     if (-not (Test-Path $regPath)) {
         New-Item -Path $regPath -Force | Out-Null
     }
     Set-ItemProperty -Path $regPath -Name $regValue -Value 0 -Type DWord
     Write-Log "Registry: SharedAccess\EnableDNS set to 0."
 } catch {
-    Write-Log "WARNING: Failed to set registry key. DNS Bind failures may persist."
+    Write-Log "WARNING: Robust DNS clearing failed. $($_.Exception.Message)"
 }
 
 # 3. Automatically detect adapters

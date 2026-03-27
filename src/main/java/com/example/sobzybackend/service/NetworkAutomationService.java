@@ -144,10 +144,13 @@ public class NetworkAutomationService {
                     "netsh interface portproxy add v4tov4 listenport=443 listenaddress=%s connectport=8080 connectaddress=%s",
                     this.hostIp, this.hostIp));
 
-            // 4. Handle Port 53 (DNS) Conflict Check
-            // We check if another process is holding Port 53 on the host IP (often SharedAccess).
-            // This prevents "Address already in use" errors during DNS server startup.
-            checkPortConflict(this.hostIp, 53);
+            // 4. Handle Port 53 (DNS) Conflict Check & Force Clear
+            // We check if another process is holding Port 53 on the host IP.
+            // If it is, we attempt to KILL the process or stop the service.
+            boolean conflictCleared = checkAndFixPortConflict(this.hostIp, 53);
+            if (!conflictCleared) {
+                log.warn("DNS Port conflict could not be automatically cleared. Binding may still fail.");
+            }
 
             // 4. Start DNS & Proxy
             log.info("Launching IWACS Pure Java Engine (DNS + Proxy) on {}...", this.hostIp);
@@ -246,24 +249,55 @@ public class NetworkAutomationService {
         deviceService.markAllDevicesInactive();
     }
 
-    private void checkPortConflict(String ip, int port) {
+    private boolean checkAndFixPortConflict(String ip, int port) {
         log.info("Checking for potential port conflict on {}:{}...", ip, port);
         try {
             // Using a DatagramSocket test to see if UDP port is occupied (DNS is UDP)
             try (java.net.DatagramSocket ds = new java.net.DatagramSocket(port, java.net.InetAddress.getByName(ip))) {
-                // If we reach here, port is free
+                log.info("UDP Port {}:{} is FREE.", ip, port);
+                return true; // No conflict
             } catch (java.io.IOException e) {
-                log.warn("PORT_CONFLICT ALERT: UDP Port {}:{} is already occupied! " +
-                         "This is likely the Windows DNS Relay (ICS). " +
-                         "The upcoming DNS Hijacker startup may fail.", ip, port);
+                log.warn("PORT_CONFLICT DETECTED: UDP Port {}:{} is occupied by another process.", ip, port);
                 
-                // Try to find the process holding the port via netstat (informative only)
-                String netstat = runPowerShell("find-port-holder", 
+                // Try to find the process holding the port via netstat
+                String netstat = runPowerShell("Detect-Port-Holder", 
                     String.format("netstat -ano -p udp | findstr :%d | findstr %s", port, ip));
-                log.info("Current UDP port holder info:\n{}", netstat);
+                log.info("Conflict Details:\n{}", netstat);
+
+                // --- PHASE 1: FORCE CLEAR VIA POWERSHELL ---
+                log.info("Attempting EMERGENCY_CLEAR of Port {}...", port);
+                String fixScript = String.format(
+                    "$endpoints = Get-NetUDPEndpoint -LocalPort %d -ErrorAction SilentlyContinue | Where-Object { $_.LocalAddress -eq '0.0.0.0' -or $_.LocalAddress -eq '%s' }; " +
+                    "foreach ($ep in $endpoints) { " +
+                    "  $p = Get-Process -Id $ep.OwningProcess -ErrorAction SilentlyContinue; " +
+                    "  if ($p -and $p.Name -ne 'svchost') { " +
+                    "    Stop-Process -Id $ep.OwningProcess -Force; " +
+                    "    Write-Output \"Killed $($p.Name) (PID: $($ep.OwningProcess))\"; " +
+                    "  } " +
+                    "}", port, ip);
+                
+                runPowerShell("Force-Kill-DNS-Conflict", fixScript);
+
+                // --- PHASE 2: ENSURE REGISTRY & RESTART ICS ---
+                log.info("Ensuring ICS Registry Fix is applied and restarting SharedAccess...");
+                String icsFixScript = "Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\SharedAccess\\Parameters' -Name 'EnableDNS' -Value 0 -Type DWord; " +
+                                    "Stop-Service SharedAccess -Force; " +
+                                    "Start-Sleep -Seconds 2; " +
+                                    "Start-Service SharedAccess;";
+                runPowerShell("ICS-Registry-Re-Apply", icsFixScript);
+
+                // Final verification
+                try (java.net.DatagramSocket ds = new java.net.DatagramSocket(port, java.net.InetAddress.getByName(ip))) {
+                    log.info("SUCCESS: UDP Port {}:{} has been CLEARED.", ip, port);
+                    return true;
+                } catch (java.io.IOException ex) {
+                    log.error("FAILURE: Port {}:{} is STILL occupied after fix attempt.", ip, port);
+                    return false;
+                }
             }
         } catch (Exception e) {
-             log.debug("Conflict check failed: {}", e.getMessage());
+             log.error("Port conflict resolution failed: {}", e.getMessage());
+             return false;
         }
     }
 
