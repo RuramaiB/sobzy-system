@@ -1,0 +1,43 @@
+﻿[INFO] Scanning for projects...
+[INFO] 
+[INFO] -----------< com.webcontrol:intelligent-web-access-control >------------
+[INFO] Building Intelligent Web Access Control System 1.0.0
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.3.2:clean (default-clean) @ intelligent-web-access-control ---
+[INFO] Deleting C:\Users\rbotso.ZBFH\Desktop\nomhani\sob\sobzy-backend\target
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ intelligent-web-access-control ---
+[INFO] Copying 2 resources from src\main\resources to target\classes
+[INFO] Copying 2 resources from src\main\resources to target\classes
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ intelligent-web-access-control ---
+[INFO] Changes detected - recompiling the module! :source
+[INFO] Compiling 92 source files with javac [debug release 17] to target\classes
+[INFO] -------------------------------------------------------------
+[ERROR] COMPILATION ERROR : 
+[INFO] -------------------------------------------------------------
+[ERROR] /C:/Users/rbotso.ZBFH/Desktop/nomhani/sob/sobzy-backend/src/main/java/com/example/sobzybackend/service/HotspotService.java:[147,41] cannot find symbol
+  symbol:   method isAuthenticated(boolean)
+  location: class com.example.sobzybackend.models.Device.DeviceBuilder
+[INFO] 1 error
+[INFO] -------------------------------------------------------------
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  58.306 s
+[INFO] Finished at: 2026-03-27T15:39:25+02:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.11.0:compile (default-compile) on project intelligent-web-access-control: Compilation failure
+[ERROR] /C:/Users/rbotso.ZBFH/Desktop/nomhani/sob/sobzy-backend/src/main/java/com/example/sobzybackend/service/HotspotService.java:[147,41] cannot find symbol
+[ERROR]   symbol:   method isAuthenticated(boolean)
+[ERROR]   location: class com.example.sobzybackend.models.Device.DeviceBuilder
+[ERROR] 
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

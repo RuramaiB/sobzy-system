@@ -4,6 +4,7 @@ spring:
     username: root
     password:
     driver-class-name: com.mysql.cj.jdbc.Driver
+    dll-auto: update
     hikari:
       maximum-pool-size: 10
       minimum-idle: 5

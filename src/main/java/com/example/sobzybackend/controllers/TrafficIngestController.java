@@ -4,6 +4,7 @@ import com.example.sobzybackend.dtos.ClassificationRequest;
 import com.example.sobzybackend.dtos.DecisionResponse;
 import com.example.sobzybackend.dtos.TrafficIngestRequest;
 import com.example.sobzybackend.service.PolicyEnforcementService;
+import com.example.sobzybackend.service.PortalService;
 import com.example.sobzybackend.service.TrafficAnalysisService;
 import com.example.sobzybackend.service.TrafficLogService;
 import org.springframework.http.ResponseEntity;
@@ -20,13 +21,16 @@ public class TrafficIngestController {
     private final TrafficAnalysisService trafficAnalysisService;
     private final TrafficLogService trafficLogService;
     private final PolicyEnforcementService policyEnforcementService;
+    private final PortalService portalService;
 
     public TrafficIngestController(TrafficAnalysisService trafficAnalysisService,
                                   TrafficLogService trafficLogService,
-                                  PolicyEnforcementService policyEnforcementService) {
+                                  PolicyEnforcementService policyEnforcementService,
+                                  PortalService portalService) {
         this.trafficAnalysisService = trafficAnalysisService;
         this.trafficLogService = trafficLogService;
         this.policyEnforcementService = policyEnforcementService;
+        this.portalService = portalService;
     }
 
     @PostMapping("/ingest")
@@ -43,7 +47,8 @@ public class TrafficIngestController {
                 .userAgent(request.getRequestHeaders().getOrDefault("User-Agent", "Unknown"))
                 .build();
 
-        DecisionResponse decision = policyEnforcementService.enforce(classificationRequest, activeBlocked);
+        String role = portalService.getRoleForIp(request.getClientIp());
+        DecisionResponse decision = policyEnforcementService.enforce(classificationRequest, activeBlocked, role);
 
         // 2. Forward to async processing for persistent logging
         trafficAnalysisService.processIngestedTraffic(request);

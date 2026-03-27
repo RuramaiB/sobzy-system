@@ -81,70 +81,77 @@ public class ClassificationService {
             java.util.Map.entry("cuevana", 0.85), java.util.Map.entry("solarmovie", 0.85), java.util.Map.entry("movierulz", 0.9)
     );
 
-    // Gaming signals — weighted carefully to avoid catching "gameplay" on youtube.com etc.
-    private static final java.util.Map<String, Double> GAMING_SIGNALS = java.util.Map.ofEntries(
-            java.util.Map.entry("roblox", 1.0), java.util.Map.entry("steampowered", 1.0), java.util.Map.entry("epicgames", 1.0),
-            java.util.Map.entry("battle.net", 1.0), java.util.Map.entry("blizzard", 0.9), java.util.Map.entry("miniclip", 1.0),
-            java.util.Map.entry("poki", 0.95), java.util.Map.entry("friv", 1.0), java.util.Map.entry("y8", 0.85),
-            java.util.Map.entry("crazygames", 1.0), java.util.Map.entry("kongregate", 1.0), java.util.Map.entry("newgrounds", 0.9),
-            java.util.Map.entry("gamedistribution", 1.0), java.util.Map.entry("silvergames", 1.0), java.util.Map.entry("agame", 0.9),
-            java.util.Map.entry("addictinggames", 1.0), java.util.Map.entry("coolmathgames", 1.0), java.util.Map.entry("girlsgogames", 1.0),
-            java.util.Map.entry("kizi", 0.95), java.util.Map.entry("armor games", 1.0), java.util.Map.entry("unblocked games", 1.0),
-            java.util.Map.entry("unblockedgames", 1.0), java.util.Map.entry("gameflare", 1.0), java.util.Map.entry("gamesjolt", 0.9)
+    // Social Media signals
+    private static final java.util.Map<String, Double> SOCIAL_SIGNALS = java.util.Map.ofEntries(
+            java.util.Map.entry("facebook", 1.0), java.util.Map.entry("instagram", 1.0), java.util.Map.entry("twitter", 1.0),
+            java.util.Map.entry("tiktok", 1.0), java.util.Map.entry("snapchat", 1.0), java.util.Map.entry("linkedin", 0.9),
+            java.util.Map.entry("reddit", 0.85), java.util.Map.entry("pinterest", 0.9), java.util.Map.entry("tumblr", 0.95),
+            java.util.Map.entry("t.co", 1.0), java.util.Map.entry("fb.com", 1.0), java.util.Map.entry("insta", 0.8)
+    );
+
+    // Education signals — used to explicitly ALLOW content
+    private static final java.util.Map<String, Double> EDUCATION_SIGNALS = java.util.Map.ofEntries(
+            java.util.Map.entry("edu", 1.0), java.util.Map.entry("ac.zw", 1.0), java.util.Map.entry("scholar", 0.9),
+            java.util.Map.entry("library", 0.8), java.util.Map.entry("university", 0.95), java.util.Map.entry("college", 0.95),
+            java.util.Map.entry("academy", 0.9), java.util.Map.entry("research", 0.85), java.util.Map.entry("science", 0.8),
+            java.util.Map.entry("journal", 0.9), java.util.Map.entry("jstor", 1.0), java.util.Map.entry("arxiv", 1.0),
+            java.util.Map.entry("khanacademy", 1.0), java.util.Map.entry("coursera", 1.0), java.util.Map.entry("udemy", 0.8),
+            java.util.Map.entry("edx", 1.0), java.util.Map.entry("mit.edu", 1.0), java.util.Map.entry("stanford.edu", 1.0)
     );
 
     // Classification confidence threshold — must score above this to block
     private static final double BLOCK_THRESHOLD = 0.55;
 
-    /**
-     * Scores a domain against a signal map. Returns a score 0.0 – 1.0.
-     * Score = max(individual signal weights) when any token is found.
-     * Multiple signals compound the score (capped at 1.0).
-     */
+    // Gaming signals
+    private static final java.util.Map<String, Double> GAMING_SIGNALS = java.util.Map.ofEntries(
+            java.util.Map.entry("roblox", 1.0), java.util.Map.entry("steampowered", 1.0), java.util.Map.entry("epicgames", 1.0),
+            java.util.Map.entry("battle.net", 1.0), java.util.Map.entry("blizzard", 0.9), java.util.Map.entry("miniclip", 1.0),
+            java.util.Map.entry("poki", 0.95), java.util.Map.entry("friv", 1.0), java.util.Map.entry("y8", 0.85),
+            java.util.Map.entry("crazygames", 1.0), java.util.Map.entry("kongregate", 1.0), java.util.Map.entry("newgrounds", 0.9),
+            java.util.Map.entry("kizi", 0.95), java.util.Map.entry("armor games", 1.0), java.util.Map.entry("unblocked games", 1.0)
+    );
+
+
     private double scoreAgainstSignals(String domain, java.util.Map<String, Double> signals) {
         double score = 0.0;
         for (java.util.Map.Entry<String, Double> entry : signals.entrySet()) {
             if (domain.contains(entry.getKey())) {
-                // Compound scoring: first hit gives full weight, subsequent hits add diminishing returns
                 score = Math.min(1.0, score + entry.getValue() * (1.0 - score * 0.5));
             }
         }
         return score;
     }
 
-    /**
-     * AI Domain Intelligence Classifier.
-     * Classifies any domain into a category using multi-signal linguistic analysis.
-     * No static blocklist needed — works on novel/unlisted domains.
-     */
     private PredictionResult classifyByDomainIntelligence(String domain) {
-        // TLD-based hard rules (highest confidence)
         for (String tld : ADULT_TLDS) {
-            if (domain.endsWith(tld)) {
-                return new PredictionResult("ADULT_CONTENT", 1.0);
-            }
+            if (domain.endsWith(tld)) return new PredictionResult("ADULT_CONTENT", 1.0);
         }
 
-        // Score each category
         double adultScore    = scoreAgainstSignals(domain, ADULT_SIGNALS);
         double gamblingScore = scoreAgainstSignals(domain, GAMBLING_SIGNALS);
         double torrentScore  = scoreAgainstSignals(domain, TORRENT_SIGNALS);
         double gamingScore   = scoreAgainstSignals(domain, GAMING_SIGNALS);
+        double socialScore   = scoreAgainstSignals(domain, SOCIAL_SIGNALS);
+        double eduScore      = scoreAgainstSignals(domain, EDUCATION_SIGNALS);
 
-        log.debug("Domain AI Scores [{}]: adult={:.2f}, gambling={:.2f}, torrent={:.2f}, gaming={:.2f}",
-                domain, adultScore, gamblingScore, torrentScore, gamingScore);
+        log.debug("Domain AI Scores [{}]: adult={:.2f}, gambling={:.2f}, torrent={:.2f}, gaming={:.2f}, social={:.2f}, edu={:.2f}",
+                domain, adultScore, gamblingScore, torrentScore, gamingScore, socialScore, eduScore);
 
-        // Pick the highest-scoring category
-        double maxScore = Math.max(Math.max(adultScore, gamblingScore), Math.max(torrentScore, gamingScore));
+        // Pick the highest scoring blocked category
+        double maxBlocked = Math.max(Math.max(adultScore, gamblingScore), Math.max(torrentScore, Math.max(gamingScore, socialScore)));
 
-        if (maxScore < BLOCK_THRESHOLD) {
-            return null; // below threshold → no block signal
+        // Educational priority: if it scores high on EDU, it's EDUCATION regardless of others (unless it's adult etc)
+        if (eduScore > 0.6 && adultScore < 0.4) {
+            return new PredictionResult("EDUCATION", eduScore);
         }
 
-        if (maxScore == adultScore)    return new PredictionResult("ADULT_CONTENT", adultScore);
-        if (maxScore == gamblingScore) return new PredictionResult("GAMBLING", gamblingScore);
-        if (maxScore == torrentScore)  return new PredictionResult("TORRENT", torrentScore);
-        return new PredictionResult("GAMING", gamingScore);
+        if (maxBlocked < BLOCK_THRESHOLD) return null;
+
+        if (maxBlocked == adultScore)    return new PredictionResult("ADULT_CONTENT", adultScore);
+        if (maxBlocked == gamblingScore) return new PredictionResult("GAMBLING", gamblingScore);
+        if (maxBlocked == torrentScore)  return new PredictionResult("TORRENT", torrentScore);
+        if (maxBlocked == gamingScore)   return new PredictionResult("GAMING", gamingScore);
+        return new PredictionResult("SOCIAL_MEDIA", socialScore);
     }
 
     @Autowired

@@ -2,6 +2,7 @@ package com.example.sobzybackend.enums;
 
 public enum DeviceStatus {
     ACTIVE("Device is active and allowed"),
+    PENDING_AUTH("Device is connected but pending authentication"),
     INACTIVE("Device is currently disconnected"),
     BLOCKED("Device is blocked"),
     SUSPENDED("Device is temporarily suspended");

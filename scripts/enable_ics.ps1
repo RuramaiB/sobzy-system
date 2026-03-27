@@ -79,17 +79,26 @@ $SourceAdapter = Get-NetRoute -DestinationPrefix '0.0.0.0/0' |
                  Select-Object -First 1
 
 # Target: The Microsoft Wi-Fi Direct Virtual Adapter used for Hotspot
-$TargetAdapter = Get-NetAdapter | 
-                 Where-Object { $_.InterfaceDescription -like "*Wi-Fi Direct Virtual Adapter*" -or $_.Name -like "*Local Area Connection* *" } | 
-                 Sort-Object Name -Descending | 
-                 Select-Object -First 1
+$TargetAdapter = $null
+$MaxAdapterWait = 10
+for ($i = 0; $i -lt $MaxAdapterWait; $i++) {
+    $TargetAdapter = Get-NetAdapter | 
+                     Where-Object { ($_.InterfaceDescription -like "*Wi-Fi Direct Virtual Adapter*" -or 
+                                    $_.Name -like "*Local Area Connection* *" -or
+                                    $_.InterfaceDescription -like "*Microsoft Wi-Fi Direct*") } | 
+                     Sort-Object Status, Name -Descending | 
+                     Select-Object -First 1
+    if ($TargetAdapter) { break }
+    Write-Log "Waiting for Virtual Adapter to appear ($($i+1)/$MaxAdapterWait)..."
+    Start-Sleep -Seconds 1
+}
 
 if (-not $SourceAdapter) {
     Write-Log "ERROR: Could not detect source adapter with internet access."
     exit 1
 }
 if (-not $TargetAdapter) {
-    Write-Log "ERROR: Could not detect target hotspot adapter (Virtual Adapter)."
+    Write-Log "ERROR: Could not detect target hotspot adapter (Virtual Adapter) after ${MaxAdapterWait}s."
     exit 1
 }
 

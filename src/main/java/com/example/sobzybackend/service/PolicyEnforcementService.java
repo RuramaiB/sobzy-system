@@ -20,11 +20,11 @@ public class PolicyEnforcementService {
     /**
      * Makes a final decision (ALLOW/BLOCK) based on policy and ML results.
      */
-    public DecisionResponse enforce(ClassificationRequest request, List<String> activeBlockedDomains) {
+    public DecisionResponse enforce(ClassificationRequest request, List<String> activeBlockedDomains, String role) {
         String url = request.getUrl();
         String domain = extractDomain(url);
 
-        // 1. Layer 1: Anti-Evasion Check
+        // 1. Layer 1: Anti-Evasion Check (Always Block)
         if (vpnDetectionService.isProxyDomain(domain) || vpnDetectionService.isSuspicious(request.getIpAddress())) {
             return DecisionResponse.builder()
                     .decision("BLOCK")
@@ -34,7 +34,7 @@ public class PolicyEnforcementService {
                     .build();
         }
 
-        // 2. Layer 2: Check Manual Deny List
+        // 2. Layer 2: Check Manual Deny List (Always Block)
         if (activeBlockedDomains.contains(domain)) {
             return DecisionResponse.builder()
                     .decision("BLOCK")
@@ -44,39 +44,44 @@ public class PolicyEnforcementService {
                     .build();
         }
 
-        // 3. Layer 3: ML Classification
+        // 3. Layer 3: AI Classification & Role-Based Policy
         ClassificationService.PredictionResult result = classificationService.predict(url);
-
         String category = result.category();
-        boolean isEducational = "RESEARCH".equals(category) || "EDUCATION".equals(category);
-        boolean isMusic = "MUSIC".equals(category);
-        boolean isToolOrUtility = "BENIGN".equals(category) || "OTHER".equals(category); // Relaxing OTHER to allow more sites
-        
-        boolean isExplicitOrRestricted = "ADULT_CONTENT".equals(category) || 
-                                        "GAMBLING".equals(category) ||
-                                        "GAMING".equals(category);
-                                        // Removing SOCIAL_MEDIA from strict block list to allow LinkedIn/Research sites
+        double confidence = result.confidence();
+
+        boolean isAdmin = "ADMIN".equals(role);
+        boolean isEducational = "EDUCATION".equals(category) || "RESEARCH".equals(category) || classificationService.isWhitelisted(domain);
+        boolean isMalicious = "ADULT_CONTENT".equals(category) || "GAMBLING".equals(category) || "TORRENT".equals(category);
 
         String decision = "ALLOW";
-        String reason = "AI Analysis: Low risk (" + category + ")";
+        String reason = "Policy: Allowed (" + category + ")";
 
-        if (isExplicitOrRestricted) {
-            decision = "BLOCK";
-            reason = "Restricted category: " + category;
-        } else if (isEducational || isMusic || isToolOrUtility || "SEARCH".equals(category) || "SOCIAL_MEDIA".equals(category)) {
-            decision = "ALLOW";
-            reason = "Allowed category: " + category;
+        if (isAdmin) {
+            // ADMINS: Block only malicious content
+            if (isMalicious) {
+                decision = "BLOCK";
+                reason = "Admin Policy: Restricted malicious category (" + category + ")";
+            }
         } else {
-            // Default to allow for anything not explicitly malicious (Restricted policy can be toggled by admin)
-            decision = "ALLOW";
-            reason = "AI Analysis: Non-restricted category (" + category + ")";
+            // USERS/GUESTS: Strict "Educational Only" Policy
+            if (isMalicious) {
+                decision = "BLOCK";
+                reason = "Policy: Restricted malicious category (" + category + ")";
+            } else if (!isEducational) {
+                // If not clearly educational, block for non-admins
+                decision = "BLOCK";
+                reason = "Policy: Non-educational content restricted for " + (role != null ? role : "Guest");
+            } else {
+                decision = "ALLOW";
+                reason = "Policy: Allowed educational content";
+            }
         }
 
         return DecisionResponse.builder()
                 .decision(decision)
                 .reason(reason)
                 .category(category)
-                .confidence(result.confidence())
+                .confidence(confidence)
                 .updatedDenyList(activeBlockedDomains)
                 .build();
     }

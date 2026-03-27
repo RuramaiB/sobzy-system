@@ -15,12 +15,17 @@ public class PortalService {
 
     // Store authenticated IPs mapped to Usernames
     private final Map<String, String> authenticatedIps = new ConcurrentHashMap<>();
+    // Store authenticated IPs mapped to Roles
+    private final Map<String, String> authenticatedRoles = new ConcurrentHashMap<>();
     // Store IP to MAC mapping for device identification
     private final Map<String, String> ipToMacMap = new ConcurrentHashMap<>();
 
-    public void authenticateIp(String ipAddress, String username) {
-        log.info("Authenticating IP {} for user {}", ipAddress, username);
+    public void authenticateIp(String ipAddress, String username, String role) {
+        log.info("Authenticating IP {} for user {} with role {}", ipAddress, username, role);
         authenticatedIps.put(ipAddress, username);
+        if (role != null) {
+            authenticatedRoles.put(ipAddress, role);
+        }
 
         // Try to capture MAC address when authenticating
         String mac = getMacFromArp(ipAddress);
@@ -36,6 +41,10 @@ public class PortalService {
 
     public String getUsernameForIp(String ipAddress) {
         return authenticatedIps.get(ipAddress);
+    }
+
+    public String getRoleForIp(String ipAddress) {
+        return authenticatedRoles.get(ipAddress);
     }
 
     public String getMacForIp(String ipAddress) {
@@ -57,6 +66,7 @@ public class PortalService {
     public void removeIp(String ipAddress) {
         log.info("Removing IP address from authenticated sessions: {}", ipAddress);
         authenticatedIps.remove(ipAddress);
+        authenticatedRoles.remove(ipAddress);
         ipToMacMap.remove(ipAddress);
     }
 

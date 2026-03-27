@@ -55,7 +55,10 @@ public class Device {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "device_status", nullable = false, length = 100)
-    private DeviceStatus status = DeviceStatus.ACTIVE;
+    private DeviceStatus status = DeviceStatus.PENDING_AUTH;
+
+    @Column(name = "is_authenticated")
+    private boolean isAuthenticated = false;
 
     @Column(name = "first_seen")
     private LocalDateTime firstSeen;
@@ -98,6 +101,8 @@ public class Device {
     public void setBrowserInfo(String browserInfo) { this.browserInfo = browserInfo; }
     public DeviceStatus getStatus() { return status; }
     public void setStatus(DeviceStatus status) { this.status = status; }
+    public boolean isAuthenticated() { return isAuthenticated; }
+    public void setAuthenticated(boolean authenticated) { isAuthenticated = authenticated; }
     public LocalDateTime getFirstSeen() { return firstSeen; }
     public void setFirstSeen(LocalDateTime firstSeen) { this.firstSeen = firstSeen; }
     public LocalDateTime getLastSeen() { return lastSeen; }

@@ -33,12 +33,14 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
+    private final PortalService portalService;
 
-    public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService, AuthenticationManager authenticationManager) {
+    public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService, AuthenticationManager authenticationManager, PortalService portalService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.authenticationManager = authenticationManager;
+        this.portalService = portalService;
     }
 
     private static final int MAX_LOGIN_ATTEMPTS = 5;
@@ -101,7 +103,7 @@ public class AuthService {
      * Login user with JWT authentication
      */
     @Transactional
-    public AuthResponse login(LoginRequest request) throws AccountLockedException, InvalidCredentialsException {
+    public AuthResponse login(LoginRequest request, String ipAddress) throws AccountLockedException, InvalidCredentialsException {
         log.info("Login attempt for user: {}", request.getUsername());
 
         // Find user
@@ -133,7 +135,7 @@ public class AuthService {
             );
 
             // Successful login
-            handleSuccessfulLogin(user);
+            handleSuccessfulLogin(user, ipAddress);
             log.info("User logged in successfully: {}", user.getUsername());
 
             // Generate JWT tokens
@@ -299,10 +301,15 @@ public class AuthService {
         userRepository.save(user);
     }
 
-    private void handleSuccessfulLogin(User user) {
+    private void handleSuccessfulLogin(User user, String ipAddress) {
         user.resetFailedLoginAttempts();
         user.updateLastLogin();
         userRepository.save(user);
+
+        // Register session in PortalService for proxy enforcement
+        if (ipAddress != null) {
+            portalService.authenticateIp(ipAddress, user.getUsername(), user.getRole().name());
+        }
     }
 
     private String getCurrentUsername() {

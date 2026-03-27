@@ -72,8 +72,8 @@ public class PortalController {
             log.info("Created new dummy user for Captive Portal email: {}", email);
         }
 
-        // 2. Authenticate IP in PortalService
-        portalService.authenticateIp(clientIp, email);
+        // 2. Authenticate IP in PortalService (Pass Role for Proxy Enforcement)
+        portalService.authenticateIp(clientIp, email, user.getRole().name());
 
         // 3. Automated Device Registration (Phone details linkage)
         try {

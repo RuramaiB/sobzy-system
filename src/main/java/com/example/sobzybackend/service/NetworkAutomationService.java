@@ -45,6 +45,7 @@ public class NetworkAutomationService {
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
     private Process proxyProcess;
     private String hostIp = "192.168.137.1"; // Default fallback
+    private String gatewayIp; // v6 Gateway IP tracking
 
     @PostConstruct
     public void init() {
@@ -113,35 +114,16 @@ public class NetworkAutomationService {
             log.info("FRONT-RUNNING: Securing DNS Port 53 before automation starts...");
             embeddedDnsServer.startDns("0.0.0.0");
 
-            // 1. Start Hotspot
-            log.info("Configuring Windows Hotspot via PowerShell...");
-            String hotspotScript = String.format(
-                    "[void][Windows.Networking.Connectivity.NetworkInformation, Windows.Networking.Connectivity, ContentType=WindowsRuntime]; "
-                            +
-                            "[void][Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager, Windows.Networking.NetworkOperators, ContentType=WindowsRuntime]; "
-                            +
-                            "$profile = [Windows.Networking.Connectivity.NetworkInformation]::GetInternetConnectionProfile(); "
-                            +
-                            "$manager = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager]::CreateFromConnectionProfile($profile); "
-                            +
-                            "$config = $manager.GetCurrentAccessPointConfiguration(); " +
-                            "$config.Ssid = '%s'; $config.Passphrase = '%s'; " +
-                            "$configAsync = $manager.ConfigureAccessPointAsync($config); " +
-                            "while ($configAsync.Status -eq 'Started') { Start-Sleep -Milliseconds 100 }; " +
-                            "$startAsync = $manager.StartTetheringAsync(); " +
-                            "while ($startAsync.Status -eq 'Started') { Start-Sleep -Milliseconds 100 }; ",
-                    ssid, password);
-            runPowerShell("Start-Hotspot", hotspotScript);
-
-            // 2. Enable ICS & Detect IP (Robust)
-            log.info("Enabling ICS Sharing and detecting Host IP...");
-            String icsPath = System.getProperty("user.dir") + "\\scripts\\enable_ics.ps1";
+            // 1. Managed Hotspot Lifecycle (v6)
+            log.info("Executing Master Hotspot Lifecycle Orchestrator...");
+            String managePath = System.getProperty("user.dir") + "\\scripts\\manage_hotspot.ps1";
             
             String detectedIp = null;
-            int ipRetries = 15; // 15 retries * 2s = 30s for IP to stabilize
+            int ipRetries = 10; // v6: More retries for managed lifecycle
             while (ipRetries > 0) {
-                detectedIp = runIcsAndGetIp(icsPath);
+                detectedIp = runManagedHotspot(managePath, ssid, password);
                 if (isValidLocalIp(detectedIp)) {
+                    log.info("DYNAMIC_IP_SUCCESS: Detected stable Hotspot IP: {}", detectedIp);
                     break;
                 }
                 ipRetries--;
@@ -208,31 +190,37 @@ public class NetworkAutomationService {
         }
     }
 
-    private String runIcsAndGetIp(String scriptPath) {
+    private String runManagedHotspot(String scriptPath, String ssid, String password) {
         String resultIp = null;
         try {
             ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                    "-Command", "& '" + scriptPath + "'");
+                    "-File", scriptPath, ssid, password);
             pb.redirectErrorStream(true);
             Process p = pb.start();
             
             BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
             String line;
             while ((line = reader.readLine()) != null) {
-                log.info("[ICS-SCRIPT] {}", line);
+                log.info("[HOTSPOT-MGR] {}", line);
                 if (line.contains("[HOST_IP]")) {
                     String[] parts = line.split("\\[HOST_IP\\]");
                     if (parts.length > 1) {
                         resultIp = parts[1].trim();
                     }
                 }
+                if (line.contains("[NETWORK_IP]")) {
+                    String[] parts = line.split("\\[NETWORK_IP\\]");
+                    if (parts.length > 1) {
+                        this.gatewayIp = parts[1].trim();
+                        log.info("Detected Network Gateway IP: {}", this.gatewayIp);
+                    }
+                }
             }
             p.waitFor();
         } catch (Exception e) {
-            log.error("Failed to execute ICS script and get IP", e);
+            log.error("Failed to execute Hotspot Manager script", e);
         }
 
-        // Use our robust detection as a fallback if the script didn't output an IP
         if (resultIp == null) {
             log.info("Script did not output [HOST_IP]. Attempting fallback detection...");
             resultIp = detectHostIp();
@@ -323,12 +311,8 @@ public class NetworkAutomationService {
                     "}", port, port);
                 runPowerShell("Force-Kill-Port", killScript);
 
-                // --- PHASE 3: RE-APPLY REGISTRY & RESTART ---
-                log.info("Re-applying ICS Registry Fix...");
-                String icsFixScript = "Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\SharedAccess\\Parameters' -Name 'EnableDNS' -Value 0 -Type DWord; " +
-                                    "Start-Service SharedAccess -ErrorAction SilentlyContinue; " +
-                                    "Start-Service dnscache -ErrorAction SilentlyContinue;";
-                runPowerShell("ICS-Registry-Final", icsFixScript);
+                // --- PHASE 3: VERIFY ---
+                log.info("Port {} conflict should now be resolved.", port);
 
                 // Final verification
                 try (java.net.DatagramSocket ds = (addr == null) ? new java.net.DatagramSocket(port) : new java.net.DatagramSocket(port, addr)) {
