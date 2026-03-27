@@ -26,6 +26,8 @@ public class EmbeddedDnsServer {
         this.classificationService = classificationService;
     }
 
+    private static final List<String> WPAD_DOMAINS = Arrays.asList("wpad.", "wpad.local.", "wpad.home.");
+
     public void setHostIp(String hostIp) {
         this.targetHostIp = hostIp;
         log.info("DNS Hijacker target IP updated to: {}", hostIp);
