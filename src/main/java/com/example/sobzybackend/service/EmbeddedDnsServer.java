@@ -17,9 +17,13 @@ public class EmbeddedDnsServer {
 
     private final PortalService portalService;
     private final ClassificationService classificationService;
-    private String targetHostIp = "127.0.0.1";
+    private String targetHostIp = "192.168.137.1"; // v5 Default legacy fallback
     private DatagramSocket udpSocket;
-    private boolean isRunning = false;
+    private volatile boolean isRunning = false;
+    
+    public boolean isRunning() {
+        return isRunning;
+    }
 
     public EmbeddedDnsServer(PortalService portalService, ClassificationService classificationService) {
         this.portalService = portalService;
@@ -56,25 +60,34 @@ public class EmbeddedDnsServer {
     }
 
     private void runDnsLoop() {
-        log.info("PRE-EMPTIVE DNS: Attempting to secure Port 53 on all interfaces...");
+        log.info("PRE-EMPTIVE DNS: Attempting to secure Port 53...");
         
-        int retries = 10; // Increased retries for front-running
+        int retries = 15; // v5: Increased retries to align with automation scripts
         while (retries > 0 && isRunning) {
             try {
-                // Bind to 0.0.0.0:53 (all interfaces) to catch requests robustly
-                udpSocket = new DatagramSocket(53);
-                log.info("SUCCESS: Port 53 secured. DNS Hijacker is now front-running.");
+                // v5 Dual-Bind: Try 0.0.0.0 (all interfaces) first
+                try {
+                    udpSocket = new DatagramSocket(53);
+                    log.info("SUCCESS: Port 53 secured on 0.0.0.0. DNS Hijacker is now front-running.");
+                } catch (Exception e) {
+                    // Only fallback to specific IP if we are halfway through retries
+                    if (retries < 7 && !targetHostIp.equals("0.0.0.0")) {
+                        log.warn("FAILED on 0.0.0.0. Trying fallback bind to {}...", targetHostIp);
+                        udpSocket = new DatagramSocket(53, InetAddress.getByName(targetHostIp));
+                        log.info("SUCCESS: Port 53 secured on SPECIFIC IP {}.", targetHostIp);
+                    } else {
+                        throw e; // Keep retrying 0.0.0.0 for first half of cycle
+                    }
+                }
                 break; // success
             } catch (Exception e) {
                 retries--;
-                log.warn("DNS Pre-bind failed ({} retries left). Conflict: {}", retries, e.getMessage());
+                log.warn("DNS Bind failed ({} retries left). Conflict: {}", retries, e.getMessage());
                 
-                // If we failed, it might be ICS. SharedAccess registry fix should help,
-                // but we wait a bit for it to stop if we just triggered a restart.
                 if (retries > 0) {
                     try { Thread.sleep(3000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
                 } else {
-                    log.error("CRITICAL: Port 53 is persistently locked.");
+                    log.error("CRITICAL: Port 53 is persistently locked by another process.");
                     isRunning = false;
                     return;
                 }

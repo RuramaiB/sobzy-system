@@ -23,22 +23,41 @@ $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters"
 $regValue = "EnableDNS"
 
 try {
-    # 2.1 Force stop the service first to ensure a clean slate
+    # 2.1 Force stop the service first (v5: with stuck service detection)
     Write-Log "Stopping SharedAccess (ICS) service..."
-    Stop-Service SharedAccess -Force -ErrorAction SilentlyContinue
+    $service = Get-Service "SharedAccess" -ErrorAction SilentlyContinue
+    if ($service) {
+        Stop-Service SharedAccess -Force -ErrorAction SilentlyContinue
+        $timeout = 10
+        while ($service.Status -ne 'Stopped' -and $timeout -gt 0) {
+            Write-Log "Waiting for SharedAccess to stop ($timeout s)..."
+            Start-Sleep -Seconds 1
+            $service = Get-Service "SharedAccess"
+            $timeout--
+        }
+        if ($service.Status -ne 'Stopped') {
+            Write-Log "WARNING: SharedAccess STUCK. Force-killing service process..."
+            taskkill /F /FI "SERVICES eq SharedAccess" /T
+            Start-Sleep -Seconds 2
+        }
+    }
     
-    # 2.2 Identify and KILL any non-essential process holding Port 53
-    # This addresses cases where Acrylic, DNSMasq or other DNS software is running
+    # 2.2 Identify and KILL any process holding Port 53 (v5: aggressive but safe)
     Write-Log "Checking for other processes on UDP Port 53..."
+    $myPid = $pid
+    $parentPid = (Get-CimInstance Win32_Process -Filter "ProcessId = $myPid").ParentProcessId
+    
     $dnsEndpoints = Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue
     foreach ($endpoint in $dnsEndpoints) {
         $ownerPid = $endpoint.OwningProcess
-        $ownerProcess = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
-        if ($ownerProcess -and $ownerProcess.Name -ne "svchost") {
-            Write-Log "PORT_CONFLICT: Terminating process $($ownerProcess.Name) (PID: $ownerPid) holding Port 53..."
-            Stop-Process -Id $ownerPid -Force
+        if ($ownerPid -eq $myPid -or $ownerPid -eq $parentPid) {
+            Write-Log "Ignoring Port 53 hold by self or parent (PID: $ownerPid)."
+            continue
         }
+        Write-Log "PORT_CONFLICT: Terminating PID: $ownerPid holding Port 53..."
+        taskkill /F /PID $ownerPid /T
     }
+    Start-Sleep -Seconds 2 # Settling wait for kernel
 
     if (-not (Test-Path $regPath)) {
         New-Item -Path $regPath -Force | Out-Null

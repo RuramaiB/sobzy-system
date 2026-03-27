@@ -1,6 +1,7 @@
 package com.example.sobzybackend.service;
 
 import com.example.sobzybackend.dtos.HotspotInfoResponse;
+import com.example.sobzybackend.repository.UserRepository;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,13 +21,16 @@ public class NetworkAutomationService {
     private final DeviceService deviceService;
     private final EmbeddedProxyServer embeddedProxyServer;
     private final EmbeddedDnsServer embeddedDnsServer;
+    private final UserRepository userRepository;
 
     public NetworkAutomationService(HotspotService hotspotService, DeviceService deviceService, 
-                                   EmbeddedProxyServer embeddedProxyServer, EmbeddedDnsServer embeddedDnsServer) {
+                                   EmbeddedProxyServer embeddedProxyServer, EmbeddedDnsServer embeddedDnsServer,
+                                   UserRepository userRepository) {
         this.hotspotService = hotspotService;
         this.deviceService = deviceService;
         this.embeddedProxyServer = embeddedProxyServer;
         this.embeddedDnsServer = embeddedDnsServer;
+        this.userRepository = userRepository;
     }
 
     @Value("${app.network.automation.enabled:true}")
@@ -102,6 +106,9 @@ public class NetworkAutomationService {
 
     private void runMasterSetup() {
         try {
+            // -1. DB WAIT (v5): Ensure database is ready before starting automation
+            waitForDatabase();
+
             // 0. FRONT-RUN DNS: Secure Port 53 immediately before Windows services start
             log.info("FRONT-RUNNING: Securing DNS Port 53 before automation starts...");
             embeddedDnsServer.startDns("0.0.0.0");
@@ -162,10 +169,14 @@ public class NetworkAutomationService {
                     this.hostIp, this.hostIp));
 
             // 4. Handle Port 53 (DNS) Conflict Check & Force Clear
-            // We now check 0.0.0.0 specifically as our server will bind to all interfaces
-            boolean conflictCleared = checkAndFixPortConflict("0.0.0.0", 53);
-            if (!conflictCleared) {
-                log.warn("DNS Port conflict could not be automatically cleared. Binding may still fail.");
+            // v5 Optimization: Skip conflict check if OUR DNS server is already holding the port
+            if (!embeddedDnsServer.isRunning()) {
+                boolean conflictCleared = checkAndFixPortConflict("0.0.0.0", 53);
+                if (!conflictCleared) {
+                    log.warn("DNS Port conflict could not be automatically cleared. Binding may still fail.");
+                }
+            } else {
+                log.info("Port 53 is already happily occupied by OUR DNS server. Skipping conflict check.");
             }
 
             // 5. Open Firewall for DNS
@@ -239,11 +250,10 @@ public class NetworkAutomationService {
     private String detectHostIp() {
         log.info("Attempting to detect the active Hotspot (ICS) gateway IP...");
         try {
-            // This query finds the IPv4 address of the adapter specifically used for Hosted Networks/Hotspots.
-            // It looks for "Wi-Fi Direct Virtual Adapter" which is the standard Windows name,
-            // or any adapter that has been assigned 192.168.137.1 (the common ICS default).
+            // v5 strictly excludes 169.254.x.x in the PowerShell query itself
             String cmd = "(Get-NetIPAddress | Where-Object { " +
                          "$_.AddressFamily -eq 'IPv4' -and " +
+                         "$_.IPAddress -notlike '169.254.*' -and " +
                          "($_.InterfaceDescription -like '*Wi-Fi Direct Virtual Adapter*' -or " +
                          " $_.InterfaceAlias -like '*Local Area Connection* *' -or " +
                          " $_.IPAddress -like '192.168.137.*') " +
@@ -362,6 +372,24 @@ public class NetworkAutomationService {
             output.append("ERROR: ").append(e.getMessage());
         }
         return output.toString();
+    }
+
+    private void waitForDatabase() {
+        log.info("V5: Waiting for database stability before initiating automation...");
+        int retries = 5;
+        while (retries > 0) {
+            try {
+                // Check if we can reach the user repository (simplest check)
+                userRepository.count();
+                log.info("Database is READY.");
+                return;
+            } catch (Exception e) {
+                retries--;
+                log.warn("Database NOT READY ({} retries left). Waiting 5 seconds...", retries);
+                try { Thread.sleep(5000); } catch (InterruptedException ignored) {}
+            }
+        }
+        log.warn("Proceeding despite database connection concerns.");
     }
 
     private void executeCommand(String command) {

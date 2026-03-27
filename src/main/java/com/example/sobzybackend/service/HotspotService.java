@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
@@ -45,6 +46,7 @@ public class HotspotService {
     // Cache for hotspot details to avoid frequent slow PS calls
     private final AtomicReference<HotspotInfoResponse> detailsCache = new AtomicReference<>();
     private final AtomicReference<Instant> lastCacheUpdate = new AtomicReference<>(Instant.EPOCH);
+    private final AtomicBoolean isScanning = new AtomicBoolean(false);
 
     @org.springframework.beans.factory.annotation.Value("${app.network.automation.ssid:Sobzy_Safe_Hotspot}")
     private String ssid;
@@ -158,18 +160,25 @@ public class HotspotService {
             // Actively refresh device list from scan if engine is running
             HotspotInfoResponse cached = detailsCache.get();
             if (cached != null && "RUNNING".equals(cached.getStatus())) {
-                try {
-                    var devices = deviceService.scanNetwork();
-                    List<HotspotDevice> hotspotDevices = devices.stream()
-                        .map(d -> com.example.sobzybackend.dtos.HotspotDevice.builder()
-                            .mac(d.getMacAddress())
-                            .ip(d.getIpAddress())
-                            .hostname(d.getDeviceName())
-                            .build())
-                        .collect(Collectors.toList());
-                    cached.setConnectedDevices(hotspotDevices);
-                } catch (Exception e) {
-                    log.error("Failed to update device list during details fetch", e);
+                if (isScanning.compareAndSet(false, true)) {
+                    try {
+                        log.debug("V5: Triggering throttled network scan...");
+                        var devices = deviceService.scanNetwork();
+                        List<HotspotDevice> hotspotDevices = devices.stream()
+                            .map(d -> com.example.sobzybackend.dtos.HotspotDevice.builder()
+                                .mac(d.getMacAddress())
+                                .ip(d.getIpAddress())
+                                .hostname(d.getDeviceName())
+                                .build())
+                            .collect(Collectors.toList());
+                        cached.setConnectedDevices(hotspotDevices);
+                    } catch (Exception e) {
+                        log.error("Failed to update device list during details fetch", e);
+                    } finally {
+                        isScanning.set(false);
+                    }
+                } else {
+                    log.debug("V5: Network scan already in progress, skipping this cycle.");
                 }
                 return cached;
             }
