@@ -44,17 +44,18 @@ public class EmbeddedDnsServer {
     }
 
     private void runDnsLoop(String hostIp) {
-        log.info("Starting DNS Hijacker on {}:53", hostIp);
+        log.info("Starting DNS Hijacker on ALL_INTERFACES:53 (Hijacking to {})", hostIp);
         
         int retries = 5;
         while (retries > 0 && isRunning) {
             try {
-                udpSocket = new DatagramSocket(53, InetAddress.getByName(hostIp));
-                log.info("DNS Server bound successfully to {}:53", hostIp);
+                // Bind to 0.0.0.0:53 (all interfaces) to catch requests robustly
+                udpSocket = new DatagramSocket(53);
+                log.info("DNS Server bound successfully to 0.0.0.0:53");
                 break; // success
             } catch (Exception e) {
                 retries--;
-                log.warn("DNS Bind failed on {}:53 ({} retries left). Error: {}", hostIp, retries, e.getMessage());
+                log.warn("DNS Bind failed on 0.0.0.0:53 ({} retries left). Error: {}", retries, e.getMessage());
                 if (retries > 0) {
                     try { Thread.sleep(2000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
                 } else {

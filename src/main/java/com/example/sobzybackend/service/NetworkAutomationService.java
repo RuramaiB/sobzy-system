@@ -145,12 +145,18 @@ public class NetworkAutomationService {
                     this.hostIp, this.hostIp));
 
             // 4. Handle Port 53 (DNS) Conflict Check & Force Clear
-            // We check if another process is holding Port 53 on the host IP.
-            // If it is, we attempt to KILL the process or stop the service.
-            boolean conflictCleared = checkAndFixPortConflict(this.hostIp, 53);
+            // We now check 0.0.0.0 specifically as our server will bind to all interfaces
+            boolean conflictCleared = checkAndFixPortConflict("0.0.0.0", 53);
             if (!conflictCleared) {
                 log.warn("DNS Port conflict could not be automatically cleared. Binding may still fail.");
             }
+
+            // 5. Open Firewall for DNS
+            log.info("Opening Windows Firewall for DNS (Port 53 UDP/TCP)...");
+            executeCommand("netsh advfirewall firewall delete rule name=\"Sobzy-DNS-UDP\"");
+            executeCommand("netsh advfirewall firewall add rule name=\"Sobzy-DNS-UDP\" dir=in action=allow protocol=UDP localport=53 profile=any");
+            executeCommand("netsh advfirewall firewall delete rule name=\"Sobzy-DNS-TCP\"");
+            executeCommand("netsh advfirewall firewall add rule name=\"Sobzy-DNS-TCP\" dir=in action=allow protocol=TCP localport=53 profile=any");
 
             // 4. Start DNS & Proxy
             log.info("Launching IWACS Pure Java Engine (DNS + Proxy) on {}...", this.hostIp);
@@ -252,46 +258,51 @@ public class NetworkAutomationService {
     private boolean checkAndFixPortConflict(String ip, int port) {
         log.info("Checking for potential port conflict on {}:{}...", ip, port);
         try {
-            // Using a DatagramSocket test to see if UDP port is occupied (DNS is UDP)
-            try (java.net.DatagramSocket ds = new java.net.DatagramSocket(port, java.net.InetAddress.getByName(ip))) {
+            // Using a DatagramSocket test
+            java.net.InetAddress addr = ip.equals("0.0.0.0") ? null : java.net.InetAddress.getByName(ip);
+            try (java.net.DatagramSocket ds = (addr == null) ? new java.net.DatagramSocket(port) : new java.net.DatagramSocket(port, addr)) {
                 log.info("UDP Port {}:{} is FREE.", ip, port);
-                return true; // No conflict
+                return true;
             } catch (java.io.IOException e) {
-                log.warn("PORT_CONFLICT DETECTED: UDP Port {}:{} is occupied by another process.", ip, port);
+                log.warn("PORT_CONFLICT DETECTED: UDP Port {}:{} is occupied.", ip, port);
                 
-                // Try to find the process holding the port via netstat
+                // Detailed detection
                 String netstat = runPowerShell("Detect-Port-Holder", 
-                    String.format("netstat -ano -p udp | findstr :%d | findstr %s", port, ip));
+                    String.format("netstat -ano -p udp | findstr :%d", port));
                 log.info("Conflict Details:\n{}", netstat);
 
-                // --- PHASE 1: FORCE CLEAR VIA POWERSHELL ---
-                log.info("Attempting EMERGENCY_CLEAR of Port {}...", port);
-                String fixScript = String.format(
-                    "$endpoints = Get-NetUDPEndpoint -LocalPort %d -ErrorAction SilentlyContinue | Where-Object { $_.LocalAddress -eq '0.0.0.0' -or $_.LocalAddress -eq '%s' }; " +
-                    "foreach ($ep in $endpoints) { " +
+                // --- PHASE 1: STOP SERVICES FIRST ---
+                log.info("Stopping SharedAccess and DNS Client to clear Port {}...", port);
+                runPowerShell("Stop-Conflicting-Services", 
+                    "Stop-Service SharedAccess -Force -ErrorAction SilentlyContinue; " +
+                    "Stop-Service dnscache -Force -ErrorAction SilentlyContinue;");
+
+                // --- PHASE 2: FORCE KILL PROCESSES ---
+                log.info("Forcefully killing any remaining Port {} holders...", port);
+                String killScript = String.format(
+                    "$eps = Get-NetUDPEndpoint -LocalPort %d -ErrorAction SilentlyContinue; " +
+                    "foreach ($ep in $eps) { " +
                     "  $p = Get-Process -Id $ep.OwningProcess -ErrorAction SilentlyContinue; " +
                     "  if ($p -and $p.Name -ne 'svchost') { " +
                     "    Stop-Process -Id $ep.OwningProcess -Force; " +
-                    "    Write-Output \"Killed $($p.Name) (PID: $($ep.OwningProcess))\"; " +
+                    "    Write-Output 'Killed process on port %d'; " +
                     "  } " +
-                    "}", port, ip);
-                
-                runPowerShell("Force-Kill-DNS-Conflict", fixScript);
+                    "}", port, port);
+                runPowerShell("Force-Kill-Port", killScript);
 
-                // --- PHASE 2: ENSURE REGISTRY & RESTART ICS ---
-                log.info("Ensuring ICS Registry Fix is applied and restarting SharedAccess...");
+                // --- PHASE 3: RE-APPLY REGISTRY & RESTART ---
+                log.info("Re-applying ICS Registry Fix...");
                 String icsFixScript = "Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\SharedAccess\\Parameters' -Name 'EnableDNS' -Value 0 -Type DWord; " +
-                                    "Stop-Service SharedAccess -Force; " +
-                                    "Start-Sleep -Seconds 2; " +
-                                    "Start-Service SharedAccess;";
-                runPowerShell("ICS-Registry-Re-Apply", icsFixScript);
+                                    "Start-Service SharedAccess -ErrorAction SilentlyContinue; " +
+                                    "Start-Service dnscache -ErrorAction SilentlyContinue;";
+                runPowerShell("ICS-Registry-Final", icsFixScript);
 
                 // Final verification
-                try (java.net.DatagramSocket ds = new java.net.DatagramSocket(port, java.net.InetAddress.getByName(ip))) {
+                try (java.net.DatagramSocket ds = (addr == null) ? new java.net.DatagramSocket(port) : new java.net.DatagramSocket(port, addr)) {
                     log.info("SUCCESS: UDP Port {}:{} has been CLEARED.", ip, port);
                     return true;
                 } catch (java.io.IOException ex) {
-                    log.error("FAILURE: Port {}:{} is STILL occupied after fix attempt.", ip, port);
+                    log.error("FAILURE: Port {}:{} STILL occupied.", ip, port);
                     return false;
                 }
             }

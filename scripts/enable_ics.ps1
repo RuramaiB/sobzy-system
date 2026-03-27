@@ -145,6 +145,13 @@ try {
             Write-Host "[HOST_IP] 192.168.137.1"
         }
 
+        # 5. Open Firewall for DNS
+        Write-Log "Configuring Windows Firewall for DNS (Port 53 UDP/TCP)..."
+        netsh advfirewall firewall delete rule name="Sobzy-DNS-UDP" | Out-Null
+        netsh advfirewall firewall add rule name="Sobzy-DNS-UDP" dir=in action=allow protocol=UDP localport=53 profile=any | Out-Null
+        netsh advfirewall firewall delete rule name="Sobzy-DNS-TCP" | Out-Null
+        netsh advfirewall firewall add rule name="Sobzy-DNS-TCP" dir=in action=allow protocol=TCP localport=53 profile=any | Out-Null
+
     } else {
         Write-Log "ERROR: Failed to map connection handles in NetSharingManager."
         exit 1
