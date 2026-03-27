@@ -58,7 +58,10 @@ public class EmbeddedDnsServer {
                 if (retries > 0) {
                     try { Thread.sleep(2000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
                 } else {
-                    log.error("CRITICAL: DNS Server failed to bind after multiple attempts. Port 53 might be locked by another service (e.g., Windows DNS Relay).");
+                    log.error("CRITICAL: DNS Server failed to bind after multiple attempts. Port 53 is being held by another process.");
+                    log.error("TROUBLESHOOTING: 1. Run 'netstat -ano -p udp | findstr :53' to find the PID.");
+                    log.error("TROUBLESHOOTING: 2. Check if Internet Connection Sharing (ICS) is properly configured (EnableDNS registry fix).");
+                    log.error("TROUBLESHOOTING: 3. Ensure no other DNS servers (Acrylic, Bind9, MaraDNS) are running.");
                     isRunning = false;
                     return;
                 }

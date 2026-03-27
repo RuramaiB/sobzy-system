@@ -249,19 +249,18 @@ public class NetworkAutomationService {
     private void checkPortConflict(String ip, int port) {
         log.info("Checking for potential port conflict on {}:{}...", ip, port);
         try {
-            // Using a simple socket test to see if port is occupied
-            try (java.net.ServerSocket ss = new java.net.ServerSocket()) {
-                ss.bind(new java.net.InetSocketAddress(ip, port));
+            // Using a DatagramSocket test to see if UDP port is occupied (DNS is UDP)
+            try (java.net.DatagramSocket ds = new java.net.DatagramSocket(port, java.net.InetAddress.getByName(ip))) {
                 // If we reach here, port is free
             } catch (java.io.IOException e) {
-                log.warn("PORT_CONFLICT ALERT: Port {}:{} is already occupied! " +
+                log.warn("PORT_CONFLICT ALERT: UDP Port {}:{} is already occupied! " +
                          "This is likely the Windows DNS Relay (ICS). " +
                          "The upcoming DNS Hijacker startup may fail.", ip, port);
                 
                 // Try to find the process holding the port via netstat (informative only)
                 String netstat = runPowerShell("find-port-holder", 
-                    String.format("netstat -ano | findstr :%d | findstr %s", port, ip));
-                log.info("Current port holder info:\n{}", netstat);
+                    String.format("netstat -ano -p udp | findstr :%d | findstr %s", port, ip));
+                log.info("Current UDP port holder info:\n{}", netstat);
             }
         } catch (Exception e) {
              log.debug("Conflict check failed: {}", e.getMessage());

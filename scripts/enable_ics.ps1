@@ -17,7 +17,22 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit 1
 }
 
-# 2. Automatically detect adapters
+# 2. Disable built-in ICS DNS to avoid Port 53 conflict
+Write-Log "Ensuring ICS DNS is disabled in Registry..."
+$regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters"
+$regValue = "EnableDNS"
+
+try {
+    if (-not (Test-Path $regPath)) {
+        New-Item -Path $regPath -Force | Out-Null
+    }
+    Set-ItemProperty -Path $regPath -Name $regValue -Value 0 -Type DWord
+    Write-Log "Registry: SharedAccess\EnableDNS set to 0."
+} catch {
+    Write-Log "WARNING: Failed to set registry key. DNS Bind failures may persist."
+}
+
+# 3. Automatically detect adapters
 Write-Log "Detecting network adapters..."
 
 # Source: The one with a valid IPv4 gateway that is NOT a virtual adapter
