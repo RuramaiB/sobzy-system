@@ -45,16 +45,34 @@ public class EmbeddedDnsServer {
 
     private void runDnsLoop(String hostIp) {
         log.info("Starting DNS Hijacker on {}:53", hostIp);
-        try {
-            udpSocket = new DatagramSocket(53, InetAddress.getByName(hostIp));
-            byte[] receiveData = new byte[1024];
+        
+        int retries = 5;
+        while (retries > 0 && isRunning) {
+            try {
+                udpSocket = new DatagramSocket(53, InetAddress.getByName(hostIp));
+                log.info("DNS Server bound successfully to {}:53", hostIp);
+                break; // success
+            } catch (Exception e) {
+                retries--;
+                log.warn("DNS Bind failed on {}:53 ({} retries left). Error: {}", hostIp, retries, e.getMessage());
+                if (retries > 0) {
+                    try { Thread.sleep(2000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                } else {
+                    log.error("CRITICAL: DNS Server failed to bind after multiple attempts. Port 53 might be locked by another service (e.g., Windows DNS Relay).");
+                    isRunning = false;
+                    return;
+                }
+            }
+        }
 
+        try {
+            byte[] receiveData = new byte[1024];
             while (isRunning) {
                 DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
                 udpSocket.receive(receivePacket);
-
+                
                 String clientIp = receivePacket.getAddress().getHostAddress();
-
+                
                 try {
                     Message request = new Message(receivePacket.getData());
                     Record question = request.getQuestion();

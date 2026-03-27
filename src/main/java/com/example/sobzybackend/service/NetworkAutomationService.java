@@ -12,7 +12,7 @@ import java.util.ArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-@org.springframework.stereotype.Service
+@Service
 public class NetworkAutomationService {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(NetworkAutomationService.class);
 
@@ -144,6 +144,11 @@ public class NetworkAutomationService {
                     "netsh interface portproxy add v4tov4 listenport=443 listenaddress=%s connectport=8080 connectaddress=%s",
                     this.hostIp, this.hostIp));
 
+            // 4. Handle Port 53 (DNS) Conflict Check
+            // We check if another process is holding Port 53 on the host IP (often SharedAccess).
+            // This prevents "Address already in use" errors during DNS server startup.
+            checkPortConflict(this.hostIp, 53);
+
             // 4. Start DNS & Proxy
             log.info("Launching IWACS Pure Java Engine (DNS + Proxy) on {}...", this.hostIp);
             embeddedDnsServer.startDns(this.hostIp);
@@ -200,19 +205,32 @@ public class NetworkAutomationService {
     }
 
     private String detectHostIp() {
+        log.info("Attempting to detect the active Hotspot (ICS) gateway IP...");
         try {
-            // Simplified fallback using Get-NetIPAddress to find the Hotspot interface
-            ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command",
-                "(Get-NetIPAddress | Where-Object { $_.AddressFamily -eq 'IPv4' -and ($_.InterfaceDescription -like '*Wi-Fi Direct Virtual Adapter*' -or $_.IPAddress -eq '192.168.137.1') }).IPAddress | Select-Object -First 1");
+            // This query finds the IPv4 address of the adapter specifically used for Hosted Networks/Hotspots.
+            // It looks for "Wi-Fi Direct Virtual Adapter" which is the standard Windows name,
+            // or any adapter that has been assigned 192.168.137.1 (the common ICS default).
+            String cmd = "(Get-NetIPAddress | Where-Object { " +
+                         "$_.AddressFamily -eq 'IPv4' -and " +
+                         "($_.InterfaceDescription -like '*Wi-Fi Direct Virtual Adapter*' -or " +
+                         " $_.InterfaceAlias -like '*Local Area Connection* *' -or " +
+                         " $_.IPAddress -like '192.168.137.*') " +
+                         "}).IPAddress | Select-Object -First 1";
+            
+            ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", cmd);
             Process p = pb.start();
             BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
             String ip = reader.readLine();
+            
             if (ip != null && !ip.trim().isEmpty()) {
+                log.info("Successfully detected Hotspot IP: {}", ip.trim());
                 return ip.trim();
             }
         } catch (Exception e) {
-            log.warn("Fallback IP detection failed: {}", e.getMessage());
+            log.warn("Robust IP detection failed: {}", e.getMessage());
         }
+        
+        log.warn("Could not detect dynamic IP. Using 192.168.137.1 as a last-resort legacy fallback.");
         return "192.168.137.1";
     }
 
@@ -228,8 +246,31 @@ public class NetworkAutomationService {
         deviceService.markAllDevicesInactive();
     }
 
-    private void runPowerShell(String taskName, String script) {
+    private void checkPortConflict(String ip, int port) {
+        log.info("Checking for potential port conflict on {}:{}...", ip, port);
+        try {
+            // Using a simple socket test to see if port is occupied
+            try (java.net.ServerSocket ss = new java.net.ServerSocket()) {
+                ss.bind(new java.net.InetSocketAddress(ip, port));
+                // If we reach here, port is free
+            } catch (java.io.IOException e) {
+                log.warn("PORT_CONFLICT ALERT: Port {}:{} is already occupied! " +
+                         "This is likely the Windows DNS Relay (ICS). " +
+                         "The upcoming DNS Hijacker startup may fail.", ip, port);
+                
+                // Try to find the process holding the port via netstat (informative only)
+                String netstat = runPowerShell("find-port-holder", 
+                    String.format("netstat -ano | findstr :%d | findstr %s", port, ip));
+                log.info("Current port holder info:\n{}", netstat);
+            }
+        } catch (Exception e) {
+             log.debug("Conflict check failed: {}", e.getMessage());
+        }
+    }
+
+    private String runPowerShell(String taskName, String script) {
         log.info("Executing PowerShell task: {} -> {}", taskName, script);
+        StringBuilder output = new StringBuilder();
         try {
             ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
                     "-Command", script);
@@ -240,6 +281,7 @@ public class NetworkAutomationService {
             String line;
             while ((line = reader.readLine()) != null) {
                 log.info("[PS-OUT][{}] {}", taskName, line);
+                output.append(line).append("\n");
             }
             
             int exitCode = p.waitFor();
@@ -250,7 +292,9 @@ public class NetworkAutomationService {
             }
         } catch (Exception e) {
             log.error("{} task failed: {}", taskName, e.getMessage());
+            output.append("ERROR: ").append(e.getMessage());
         }
+        return output.toString();
     }
 
     private void executeCommand(String command) {

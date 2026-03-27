@@ -26,10 +26,12 @@ public class DeviceService {
 
     private final DeviceRepository deviceRepository;
     private final UserRepository userRepository;
+    private final PortalService portalService;
 
-    public DeviceService(DeviceRepository deviceRepository, UserRepository userRepository) {
+    public DeviceService(DeviceRepository deviceRepository, UserRepository userRepository, PortalService portalService) {
         this.deviceRepository = deviceRepository;
         this.userRepository = userRepository;
+        this.portalService = portalService;
     }
 
     @Transactional
@@ -187,6 +189,8 @@ public class DeviceService {
                                         hostname.toLowerCase().contains("iphone") ? "Mobile" : "Desktop")
                                 .status("ACTIVE")
                                 .lastSeen(LocalDateTime.now())
+                                .authenticated(portalService.isIpAuthenticated(ip))
+                                .blocked(false) // Default for newly discovered active clients
                                 .build();
                         discoveredDevices.add(response);
                     }
@@ -236,6 +240,8 @@ public class DeviceService {
                 .totalBandwidthUsed(device.getTotalBandwidthUsed())
                 .firstSeen(device.getFirstSeen())
                 .lastSeen(device.getLastSeen())
+                .authenticated(portalService.isIpAuthenticated(device.getIpAddress()))
+                .blocked(device.getStatus() == com.example.sobzybackend.enums.DeviceStatus.BLOCKED)
                 .build();
     }
 }

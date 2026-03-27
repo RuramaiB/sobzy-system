@@ -16,10 +16,12 @@ public class DeviceResponse {
     private Long totalBandwidthUsed;
     private LocalDateTime firstSeen;
     private LocalDateTime lastSeen;
+    private boolean authenticated;
+    private boolean blocked;
 
     public DeviceResponse() {}
 
-    public DeviceResponse(Long id, Long userId, String username, String deviceName, String macAddress, String ipAddress, String deviceType, String osInfo, String browserInfo, String status, Long totalBandwidthUsed, LocalDateTime firstSeen, LocalDateTime lastSeen) {
+    public DeviceResponse(Long id, Long userId, String username, String deviceName, String macAddress, String ipAddress, String deviceType, String osInfo, String browserInfo, String status, Long totalBandwidthUsed, LocalDateTime firstSeen, LocalDateTime lastSeen, boolean authenticated, boolean blocked) {
         this.id = id;
         this.userId = userId;
         this.username = username;
@@ -33,6 +35,8 @@ public class DeviceResponse {
         this.totalBandwidthUsed = totalBandwidthUsed;
         this.firstSeen = firstSeen;
         this.lastSeen = lastSeen;
+        this.authenticated = authenticated;
+        this.blocked = blocked;
     }
 
     public Long getId() { return id; }
@@ -61,6 +65,10 @@ public class DeviceResponse {
     public void setFirstSeen(LocalDateTime firstSeen) { this.firstSeen = firstSeen; }
     public LocalDateTime getLastSeen() { return lastSeen; }
     public void setLastSeen(LocalDateTime lastSeen) { this.lastSeen = lastSeen; }
+    public boolean isAuthenticated() { return authenticated; }
+    public void setAuthenticated(boolean authenticated) { this.authenticated = authenticated; }
+    public boolean isBlocked() { return blocked; }
+    public void setBlocked(boolean blocked) { this.blocked = blocked; }
 
     public static DeviceResponseBuilder builder() {
         return new DeviceResponseBuilder();
@@ -80,6 +88,8 @@ public class DeviceResponse {
         private Long totalBandwidthUsed;
         private LocalDateTime firstSeen;
         private LocalDateTime lastSeen;
+        private boolean authenticated;
+        private boolean blocked;
 
         public DeviceResponseBuilder id(Long id) { this.id = id; return this; }
         public DeviceResponseBuilder userId(Long userId) { this.userId = userId; return this; }
@@ -94,9 +104,11 @@ public class DeviceResponse {
         public DeviceResponseBuilder totalBandwidthUsed(Long totalBandwidthUsed) { this.totalBandwidthUsed = totalBandwidthUsed; return this; }
         public DeviceResponseBuilder firstSeen(LocalDateTime firstSeen) { this.firstSeen = firstSeen; return this; }
         public DeviceResponseBuilder lastSeen(LocalDateTime lastSeen) { this.lastSeen = lastSeen; return this; }
+        public DeviceResponseBuilder authenticated(boolean authenticated) { this.authenticated = authenticated; return this; }
+        public DeviceResponseBuilder blocked(boolean blocked) { this.blocked = blocked; return this; }
 
         public DeviceResponse build() {
-            return new DeviceResponse(id, userId, username, deviceName, macAddress, ipAddress, deviceType, osInfo, browserInfo, status, totalBandwidthUsed, firstSeen, lastSeen);
+            return new DeviceResponse(id, userId, username, deviceName, macAddress, ipAddress, deviceType, osInfo, browserInfo, status, totalBandwidthUsed, firstSeen, lastSeen, authenticated, blocked);
         }
     }
 }
